@@ -31,7 +31,7 @@ class _SearchResultPageState extends State<SearchResultPage> with TickerProvider
   Future<void> _searchListings() async {
     setState(() => isLoading = true);
     // Example: fetch all listings and filter by keyword (replace with Firestore query for production)
-    final allListings = await ListingService().getListings().first;
+    final allListings = await ListingService.getListings().first;
     searchedListings = allListings.where((listing) =>
       listing.title.toLowerCase().contains(widget.searchKeyword.toLowerCase()) ||
       listing.description.toLowerCase().contains(widget.searchKeyword.toLowerCase())

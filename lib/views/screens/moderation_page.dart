@@ -26,7 +26,7 @@ class ModerationPage extends StatelessWidget {
         ],
       ),
       body: StreamBuilder<List<Report>>(
-        stream: ReportService().getReports(resolved: false),
+        stream: ReportService.getReports(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
@@ -46,7 +46,7 @@ class ModerationPage extends StatelessWidget {
                   subtitle: Text('Reason: ${report.reason}\nDetails: ${report.details}\nBy: ${report.reporterId}'),
                   trailing: ElevatedButton(
                     onPressed: () async {
-                      await ReportService().resolveReport(report.id);
+                      await ReportService.resolveReport(report.id);
                     },
                     child: Text('Mark Resolved'),
                   ),

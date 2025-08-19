@@ -75,7 +75,7 @@ class ItemCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    listing.address,
+                    listing.location,
                     style: TextStyle(
                       color: Colors.grey,
                       fontSize: 10,
