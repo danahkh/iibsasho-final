@@ -1,40 +1,40 @@
 import 'package:flutter/material.dart';
 import 'constant/app_color.dart';
 import 'package:flutter/services.dart';
-import 'views/screens/welcome_page.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'views/screens/login_page.dart';
-import 'views/screens/home_page.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/utils/supabase_helper.dart';
+import 'views/screens/page_switcher.dart';
+import 'views/screens/password_reset_page.dart';
+import 'dart:async';
 
 // import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
+// Supabase project credentials
+const String supabaseUrl = 'https://lvvlhybntvxmohairkpi.supabase.co';
+const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2dmxoeWJudHZ4bW9oYWlya3BpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTMyNjI1MTAsImV4cCI6MjA2ODgzODUxMH0.z-3Kd-F2uqhMhWV4el5Z8Y_4n_tlTCkQdiOrMkYTjVM';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (kIsWeb) {
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyBGfDh33gw6xOaTT1WZDvZUc0J1x_gMs4o",
-        authDomain: "iibsasho-ebcbe.firebaseapp.com",
-        projectId: "iibsasho-ebcbe",
-        storageBucket: "iibsasho-ebcbe.firebasestorage.app",
-        messagingSenderId: "552706855208",
-        appId: "1:552706855208:web:d563be9bb019905ba4001d",
-        measurementId: "G-31NTNSZZ9V",
-      ),
+  
+  // Initialize Supabase with error handling
+  try {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
     );
-  } else {
-    await Firebase.initializeApp();
+  // Initialization complete
+  } catch (e) {
+  // Suppressed debug print
+    // Show error dialog or handle gracefully
   }
+  
   runApp(MyApp());
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
   SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
     statusBarColor: AppColor.primary,
     statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: const Color.fromARGB(255, 211, 255, 207),
+    systemNavigationBarColor: AppColor.background,
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
 }
@@ -54,10 +54,33 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   Locale? _locale;
+  StreamSubscription<AuthState>? _authSub;
   void setLocale(Locale locale) {
     setState(() {
       _locale = locale;
     });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((event) {
+      if (event.event == AuthChangeEvent.passwordRecovery) {
+        Future.microtask(() {
+          if (mounted) {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PasswordResetPage()),
+            );
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -76,6 +99,46 @@ class _MyAppState extends State<MyApp> {
             theme: ThemeData(
               scaffoldBackgroundColor: AppColor.background,
               fontFamily: 'Nunito',
+              primaryColor: AppColor.primary,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: AppColor.primary,
+                brightness: Brightness.light,
+                background: AppColor.background,
+                surface: AppColor.cardBackground,
+                primary: AppColor.primary,
+                secondary: AppColor.accent,
+                error: AppColor.error,
+              ),
+              appBarTheme: AppBarTheme(
+                backgroundColor: AppColor.primary,
+                foregroundColor: AppColor.textLight,
+                elevation: 2,
+                shadowColor: AppColor.shadowColor,
+              ),
+              elevatedButtonTheme: ElevatedButtonThemeData(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColor.primary,
+                  foregroundColor: AppColor.textLight,
+                  elevation: 2,
+                  shadowColor: AppColor.shadowColor,
+                ),
+              ),
+              inputDecorationTheme: InputDecorationTheme(
+                fillColor: AppColor.inputBackground,
+                filled: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.primary, width: 2),
+                ),
+              ),
             ),
             localizationsDelegates: [
               // AppLocalizations.delegate,
@@ -97,7 +160,7 @@ class _MyAppState extends State<MyApp> {
               return supportedLocales.first;
             },
             locale: _locale,
-            home: HomePage(),
+            home: PageSwitcher(),
           );
         } else {
           return MaterialApp(
@@ -105,6 +168,46 @@ class _MyAppState extends State<MyApp> {
             theme: ThemeData(
               scaffoldBackgroundColor: AppColor.background,
               fontFamily: 'Nunito',
+              primaryColor: AppColor.primary,
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: AppColor.primary,
+                brightness: Brightness.light,
+                background: AppColor.background,
+                surface: AppColor.cardBackground,
+                primary: AppColor.primary,
+                secondary: AppColor.accent,
+                error: AppColor.error,
+              ),
+              appBarTheme: AppBarTheme(
+                backgroundColor: AppColor.primary,
+                foregroundColor: AppColor.textLight,
+                elevation: 2,
+                shadowColor: AppColor.shadowColor,
+              ),
+              elevatedButtonTheme: ElevatedButtonThemeData(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColor.primary,
+                  foregroundColor: AppColor.textLight,
+                  elevation: 2,
+                  shadowColor: AppColor.shadowColor,
+                ),
+              ),
+              inputDecorationTheme: InputDecorationTheme(
+                fillColor: AppColor.inputBackground,
+                filled: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: AppColor.primary, width: 2),
+                ),
+              ),
             ),
             localizationsDelegates: [
               // AppLocalizations.delegate,
@@ -126,7 +229,7 @@ class _MyAppState extends State<MyApp> {
               return supportedLocales.first;
             },
             locale: _locale,
-            home: WelcomePage(),
+            home: PageSwitcher(),
           );
         }
       },
@@ -134,13 +237,21 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<User?> _checkUserAndDoc() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = SupabaseHelper.currentUser;
     if (user == null) return null;
-    final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    if (!doc.exists) {
-      await FirebaseAuth.instance.signOut();
+    
+    try {
+      // Check if user profile exists in users table
+      final profile = await SupabaseHelper.getCurrentUserProfile();
+      if (profile == null) {
+        await SupabaseHelper.signOut();
+        return null;
+      }
+      return user;
+    } catch (e) {
+      // If there's an error accessing the profile, sign out
+      await SupabaseHelper.signOut();
       return null;
     }
-    return user;
   }
 }
