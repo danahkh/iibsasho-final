@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Firebase auth & firestore removed. TODO: Implement Supabase sign up + profile insert.
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
@@ -27,26 +26,18 @@ class _RegisterPageState extends State<RegisterPage> {
   Future<void> _signup() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-      final user = credential.user;
+  // TODO: Supabase sign up
+  // final res = await SupabaseHelper.client.auth.signUp(
+  //   email: _emailController.text.trim(),
+  //   password: _passwordController.text.trim(),
+  // );
+  final user = null; // res.user;
       String? photoUrl;
       if (_imageFile != null) {
         // TODO: Upload image to storage and get URL
         // photoUrl = await uploadImage(_imageFile!);
       }
-      if (user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'uid': user.uid,
-          'email': user.email,
-          'name': _nameController.text.trim(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'role': 'user',
-          'photoUrl': photoUrl ?? '',
-        });
-      }
+  // if (user != null) { await SupabaseHelper.upsertUserProfile({...}); }
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (context) => LoginPage()));
     } catch (e) {
       setState(() { _error = e.toString(); });

@@ -1,37 +1,27 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Firestore implementation removed. TODO: Implement Supabase RPC or table queries.
 import '../model/listing.dart';
 
 class ListingService {
-  final CollectionReference listings = FirebaseFirestore.instance.collection('listings');
-
-  Future<void> createListing(Listing listing) async {
-    await listings.add(listing.toMap());
+  static Future<void> createListing(Listing listing) async {
+    // await SupabaseHelper.client.from('listings').insert(listing.toMap());
   }
-
-  Future<void> updateListing(String id, Map<String, dynamic> data) async {
-    await listings.doc(id).update(data);
+  static Future<void> updateListing(String id, Map<String, dynamic> data) async {
+    // await SupabaseHelper.client.from('listings').update(data).eq('id', id);
   }
-
-  Future<void> deleteListing(String id) async {
-    await listings.doc(id).delete();
+  static Future<void> deleteListing(String id) async {
+    // await SupabaseHelper.client.from('listings').delete().eq('id', id);
   }
-
-  Stream<List<Listing>> getListings() {
-    return listings.snapshots().map((snapshot) =>
-      snapshot.docs.map((doc) => Listing.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList()
-    );
+  static Stream<List<Listing>> getListings() {
+    // Placeholder empty stream until implemented.
+    return const Stream.empty();
   }
-
-  Future<Listing?> getListingById(String id) async {
-    final doc = await listings.doc(id).get();
-    if (doc.exists) {
-      return Listing.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-    }
-    return null;
+  static Future<Listing?> getListingById(String id) async {
+    return null; // TODO
   }
-
-  Future<List<Listing>> fetchListings() async {
-    final snapshot = await listings.get();
-    return snapshot.docs.map((doc) => Listing.fromMap(doc.data() as Map<String, dynamic>, doc.id)).toList();
+  static Future<List<Listing>> fetchListings() async {
+    return []; // TODO
   }
+  static Future<List<Listing>> getUserListings(String userId) async { return []; }
+  static Future<bool> deleteListingForce(String id) async { return false; }
+  static Future<void> debugCategoriesInDatabase() async {}
 }

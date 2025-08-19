@@ -4,10 +4,14 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+// Firebase imports removed (migrated to Supabase). TODO: Implement Supabase storage upload.
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Firestore import removed. Replace GeoPoint with a simple data holder or Supabase PostGIS if enabled.
+class GeoPoint { // Minimal replacement until Supabase location modeling decided
+  final double latitude;
+  final double longitude;
+  GeoPoint(this.latitude, this.longitude);
+}
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../core/model/listing.dart';
 import '../../core/services/listing_service.dart';
@@ -120,33 +124,16 @@ class _ListingFormPageState extends State<ListingFormPage> {
     List<String> imageUrls = [];
     List<String> videoUrls = [];
     try {
-      for (var img in images) {
-        final ref = FirebaseStorage.instance.ref().child('listing_images/${DateTime.now().millisecondsSinceEpoch}_${img.name}');
-        if (kIsWeb) {
-          await ref.putData(await img.readAsBytes()).timeout(const Duration(seconds: 30));
-        } else {
-          await ref.putFile(File(img.path)).timeout(const Duration(seconds: 30));
-        }
-        final url = await ref.getDownloadURL();
-        imageUrls.add(url);
-      }
-      for (var vid in videos) {
-        final ref = FirebaseStorage.instance.ref().child('listing_videos/${DateTime.now().millisecondsSinceEpoch}_${vid.name}');
-        if (kIsWeb) {
-          await ref.putData(await vid.readAsBytes()).timeout(const Duration(minutes: 2));
-        } else {
-          await ref.putFile(File(vid.path)).timeout(const Duration(minutes: 2));
-        }
-        final url = await ref.getDownloadURL();
-        videoUrls.add(url);
-      }
+      // TODO: Upload images/videos to Supabase storage buckets and collect URLs.
+      // Placeholder: no upload performed.
     } catch (e) {
       setState(() => isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Media upload failed: $e')));
       return;
     }
     // Get current user
-    final user = FirebaseAuth.instance.currentUser;
+  // TODO: Replace with Supabase auth user id
+  final userId = ''; // SupabaseHelper.currentUser?.id ?? '';
     final listing = Listing(
       id: widget.listing?.id ?? '',
       title: titleController.text,
@@ -158,7 +145,7 @@ class _ListingFormPageState extends State<ListingFormPage> {
         GeoPoint(selectedLocation!.latitude, selectedLocation!.longitude) : GeoPoint(0, 0),
       address: address,
       condition: condition,
-      userId: user?.uid ?? '',
+  userId: userId,
       createdAt: DateTime.now(),
       isActive: true,
       category: selectedCategory?.name ?? '',

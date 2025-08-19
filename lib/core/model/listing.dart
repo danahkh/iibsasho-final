@@ -1,4 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+// Firestore import removed. Replace GeoPoint with local class if needed.
+class GeoPoint {
+  final double latitude;
+  final double longitude;
+  GeoPoint(this.latitude, this.longitude);
+}
 
 class Listing {
   String id;

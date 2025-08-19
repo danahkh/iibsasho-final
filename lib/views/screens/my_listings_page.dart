@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import '../../core/model/listing.dart';
 import '../../core/services/listing_service.dart';
 import '../../constant/app_color.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+// Firebase auth removed. TODO: Use SupabaseHelper for current user.
 
 class MyListingsPage extends StatelessWidget {
   const MyListingsPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final currentUser = FirebaseAuth.instance.currentUser;
+  // final currentUser = SupabaseHelper.currentUser;
     return Scaffold(
       appBar: AppBar(
         title: Row(
