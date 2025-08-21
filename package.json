@@ -1,0 +1,9 @@
+{
+	"name": "iibsasho",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Flutter web deployment for iibsasho on Vercel",
+	"scripts": {
+		"vercel-build": "bash scripts/vercel_flutter_build.sh"
+	}
+}
