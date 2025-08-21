@@ -24,12 +24,19 @@ class _SearchBarWidgetState extends State<_SearchBarWidget> {
       return;
     }
     setState(() { _loading = true; });
-    final allListings = await ListingService().fetchListings();
+  final allListings = await ListingService.fetchListings();
     final filtered = allListings.where((l) =>
       l.title.toLowerCase().contains(query.toLowerCase()) ||
       l.description.toLowerCase().contains(query.toLowerCase()) ||
       l.category.toLowerCase().contains(query.toLowerCase())
     ).toList();
+    filtered.sort((a, b) {
+      int p = (b.isPromoted ? 1 : 0) - (a.isPromoted ? 1 : 0);
+      if (p != 0) return p;
+      int f = (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
+      if (f != 0) return f;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     setState(() {
       _results = filtered;
       _showResults = true;
@@ -41,12 +48,19 @@ class _SearchBarWidgetState extends State<_SearchBarWidget> {
   void _onSearchSubmitted(String query) async {
     if (query.isEmpty) return;
     setState(() { _loading = true; });
-    final allListings = await ListingService().fetchListings();
+  final allListings = await ListingService.fetchListings();
     final filtered = allListings.where((l) =>
       l.title.toLowerCase().contains(query.toLowerCase()) ||
       l.description.toLowerCase().contains(query.toLowerCase()) ||
       l.category.toLowerCase().contains(query.toLowerCase())
     ).toList();
+    filtered.sort((a, b) {
+      int p = (b.isPromoted ? 1 : 0) - (a.isPromoted ? 1 : 0);
+      if (p != 0) return p;
+      int f = (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
+      if (f != 0) return f;
+      return b.createdAt.compareTo(a.createdAt);
+    });
     setState(() {
       _results = filtered;
       _showResults = false;

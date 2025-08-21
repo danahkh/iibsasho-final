@@ -34,7 +34,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         ],
       ),
       body: StreamBuilder<List<Listing>>(
-        stream: ListingService().getListings(),
+        stream: ListingService.getListings(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
@@ -56,7 +56,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                     children: [
                       Text(listing.description, style: TextStyle(color: AppColor.textDark.withOpacity(0.7))),
                       SizedBox(height: 4),
-                      Text('₦${listing.price}', style: TextStyle(color: AppColor.primary)),
+                      Text('\$${listing.price.toStringAsFixed(0)}', style: TextStyle(color: AppColor.primary)),
                       SizedBox(height: 4),
                       Text('Category: ${listing.category}', style: TextStyle(fontSize: 12)),
                       SizedBox(height: 4),
@@ -96,7 +96,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                         ),
                       );
                       if (confirm == true) {
-                        await ListingService().deleteListing(listing.id);
+                        await ListingService.deleteListing(listing.id);
                         setState(() {});
                       }
                     },

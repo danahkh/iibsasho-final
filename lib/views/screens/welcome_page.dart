@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../constant/app_color.dart';
 import 'login_page.dart';
+import 'supabase_test_page.dart';
 
 class WelcomePage extends StatelessWidget {
   const WelcomePage({super.key});
@@ -48,25 +49,45 @@ class WelcomePage extends StatelessWidget {
                 ),
               ],
             ),
-            // Section 3 - Get Started Button
+            // Section 3 - Get Started Button and Test Button
             Container(
               width: MediaQuery.of(context).size.width,
               padding: EdgeInsets.symmetric(horizontal: 16),
               margin: EdgeInsets.only(bottom: 16),
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).push(MaterialPageRoute(builder: (context) => LoginPage()));
-                },
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(horizontal: 36, vertical: 18), backgroundColor: AppColor.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                ),
-                child: Text(
-                  'Get Started',
-                  style: TextStyle(color: AppColor.textLight, fontWeight: FontWeight.w600, fontSize: 18, fontFamily: 'poppins'),
-                ),
+              child: Column(
+                children: [
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(MaterialPageRoute(builder: (context) => LoginPage()));
+                    },
+                    style: ElevatedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 36, vertical: 18), 
+                      backgroundColor: AppColor.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 0,
+                      shadowColor: Colors.transparent,
+                    ),
+                    child: Text(
+                      'Get Started',
+                      style: TextStyle(color: AppColor.textLight, fontWeight: FontWeight.w600, fontSize: 18, fontFamily: 'poppins'),
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(MaterialPageRoute(builder: (context) => SupabaseTestPage()));
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 36, vertical: 18),
+                      side: BorderSide(color: AppColor.primary),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: Text(
+                      'Test Database Connection',
+                      style: TextStyle(color: AppColor.primary, fontWeight: FontWeight.w600, fontSize: 16),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

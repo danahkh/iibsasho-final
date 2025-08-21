@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/utils/app_logger.dart';
 import '../../constant/app_color.dart';
 import '../../core/model/listing.dart';
 import '../../core/services/listing_service.dart';
-import '../../core/services/promotion_fair_service.dart';
 import '../../core/utils/supabase_helper.dart';
 import '../../core/constant_categories.dart';
 import 'product_detail.dart';
@@ -11,14 +11,19 @@ import '../../core/services/notification_service.dart';
 import '../../core/model/notification_item.dart';
 import '../../widgets/home_drawer.dart';
 import 'notification_page.dart';
+import 'search_page.dart';
 
 class HomePage extends StatefulWidget {
+  // Global key to allow external refresh triggers (e.g., tapping Home icon from other tabs/pages)
+  static final GlobalKey<HomePageState> globalKey = GlobalKey<HomePageState>();
+
   const HomePage({super.key});
   @override
-  _HomePageState createState() => _HomePageState();
+  HomePageState createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+// Made public so other files (PageSwitcher, bottom nav) can reference its State via the global key
+class HomePageState extends State<HomePage> {
   Timer? flashsaleCountdownTimer;
   Timer? _debounceTimer;
   Duration flashsaleCountdownDuration = Duration(
@@ -36,6 +41,8 @@ class _HomePageState extends State<HomePage> {
   late Future<List<Listing>> _listingsFuture;
   List<Listing> _allListings = [];
   List<Listing> _displayedListings = [];
+  List<Listing> _recommended = [];
+  bool _loadingRecommended = false;
   bool _isLoading = false;
   bool _isLoadingMore = false;
   final int _pageSize = 20;
@@ -54,6 +61,7 @@ class _HomePageState extends State<HomePage> {
     selectedCategory = null;
     _listingsFuture = Future.value(<Listing>[]);
     _loadAllListings();
+  _loadRecommendations();
     _scrollController.addListener(_onScroll);
     _debugDatabaseContent();
   }
@@ -66,67 +74,166 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-  // Removed debug log
-      final listings = await ListingService.fetchListings();
-      // Fair promotional ordering (replaces previous heuristic)
-      List<Listing> ordered;
-      try {
-        ordered = await PromotionFairService.orderFairly(listings);
-      } catch (_) {
-        ordered = _applyPromotionOrdering(listings); // fallback
-      }
+  AppLogger.d('Loading all listings from database...');
+  final listings = await ListingService.fetchListings();
+  _sortListings(listings);
       setState(() {
-        _allListings = ordered;
+        _allListings = listings;
         _currentPage = 0;
-        int endIndex = (_pageSize < ordered.length) ? _pageSize : ordered.length;
-        _displayedListings = ordered.take(endIndex).toList();
+        int endIndex = (_pageSize < listings.length) ? _pageSize : listings.length;
+        _displayedListings = listings.take(endIndex).toList();
         _listingsFuture = Future.value(_displayedListings);
         _isLoading = false;
       });
-      _recordInitialImpressions();
+  AppLogger.d('Loaded \\${listings.length} listings (showing first \\${_displayedListings.length})');
     } catch (e) {
-      setState(() { _isLoading = false; });
+  AppLogger.e('Error loading listings', e);
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
-  Future<void> _filterListings() async {
-    if (_isLoading) return;
+  Future<void> _loadRecommendations() async {
+    if (_loadingRecommended) return;
+    final user = SupabaseHelper.currentUser;
+    if (user == null) return;
+    setState(() { _loadingRecommended = true; });
+    try {
+      final recs = await ListingService.recommendListings(user.id, limit: 20);
+      setState(() { _recommended = recs; });
+    } catch (e) {
+      AppLogger.e('Recommendation load error', e);
+    } finally {
+      if (mounted) setState(() { _loadingRecommended = false; });
+    }
+  }
+
+  void _filterListings() {
+    _debounceTimer?.cancel();
+    
+  if (_isLoading) return; // skip while loading
+    
+    _debounceTimer = Timer(Duration(milliseconds: 300), () {
+      _performFiltering();
+    });
+  }
+  
+  void _performFiltering() {
+    if (_isLoading || !mounted) return;
+    
+  // Removed verbose filtering debug logs for production
+    
     List<Listing> filtered = List.from(_allListings);
 
-    // Category filter
+    // Enhanced category filtering
     if (selectedCategory != null) {
-      filtered = filtered.where((l) => l.category == selectedCategory!.id).toList();
-    }
-    // Subcategory filter with flexible rent/sale handling
-    if (selectedSubcategory != null) {
-      final selectedSub = selectedSubcategory!.id.toLowerCase();
-      filtered = filtered.where((l) {
-        final listingSub = l.subcategory.toLowerCase();
-        if (listingSub == selectedSub) return true;
+  // category filter applied
+      
+      filtered = filtered.where((listing) {
+        final listingCategory = listing.category.toLowerCase().trim();
+        final selectedCategoryId = selectedCategory!.id.toLowerCase().trim();
+        
         bool matches = false;
-        // Rent grouping
-        if (selectedSub.contains('rent') && listingSub.contains('rent')) {
-          String baseSel = selectedSub.replaceAll('_rent', '').replaceAll('rent', '').trim();
-            String baseLst = listingSub.replaceAll('_rent', '').replaceAll('rent', '').trim();
-            if (baseSel.isNotEmpty && (baseLst.contains(baseSel) || baseSel.contains(baseLst))) matches = true;
+        
+        // Direct match
+        if (listingCategory == selectedCategoryId) {
+          matches = true;
         }
-        // Sale grouping
-        if (!matches && selectedSub.contains('sale') && listingSub.contains('sale')) {
-          String baseSel = selectedSub.replaceAll('_sale', '').replaceAll('sale', '').trim();
-          String baseLst = listingSub.replaceAll('_sale', '').replaceAll('sale', '').trim();
-          if (baseSel.isNotEmpty && (baseLst.contains(baseSel) || baseSel.contains(baseLst))) matches = true;
+        
+        // Handle underscore/space variations
+        if (listingCategory.replaceAll('_', ' ') == selectedCategoryId.replaceAll('_', ' ')) {
+          matches = true;
         }
-        // Flexible underscore removal comparison
-        if (!matches) {
-          final noUnderscoreSel = selectedSub.replaceAll('_', '');
-          final noUnderscoreLst = listingSub.replaceAll('_', '');
-          if (noUnderscoreLst.contains(noUnderscoreSel) || noUnderscoreSel.contains(noUnderscoreLst)) matches = true;
+        
+        if (listingCategory.replaceAll(' ', '_') == selectedCategoryId.replaceAll(' ', '_')) {
+          matches = true;
         }
+        
+        // Special handling for real estate
+        if (selectedCategoryId == 'real_estate' || selectedCategoryId == 'real estate') {
+          if (listingCategory.contains('real') || 
+              listingCategory == 'realestate' || 
+              listingCategory == 'real_estate' || 
+              listingCategory == 'real estate') {
+            matches = true;
+          }
+        }
+        
+        // Additional flexible matching
+        if (listingCategory.contains(selectedCategoryId.replaceAll('_', '')) ||
+            selectedCategoryId.contains(listingCategory.replaceAll('_', ''))) {
+          matches = true;
+        }
+        
+  // category match debug removed
+        
         return matches;
       }).toList();
+      
+  // category filter count: filtered.length
     }
 
-    // Price range
+    // Enhanced subcategory filtering
+    if (selectedSubcategory != null) {
+  // subcategory filter applied
+      
+      filtered = filtered.where((listing) {
+        final listingSubcategory = listing.subcategory.toLowerCase().trim();
+        final selectedSubcategoryId = selectedSubcategory!.id.toLowerCase().trim();
+        
+        bool matches = false;
+        
+        // Direct match
+        if (listingSubcategory == selectedSubcategoryId) {
+          matches = true;
+        }
+        
+        // Handle underscore/space variations
+        if (listingSubcategory.replaceAll('_', ' ') == selectedSubcategoryId.replaceAll('_', ' ')) {
+          matches = true;
+        }
+        
+        if (listingSubcategory.replaceAll(' ', '_') == selectedSubcategoryId.replaceAll(' ', '_')) {
+          matches = true;
+        }
+        
+        // Special handling for rent/sale subcategories
+        if (selectedSubcategoryId.contains('rent')) {
+          if (listingSubcategory.contains('rent')) {
+            String selectedBase = selectedSubcategoryId.replaceAll('_rent', '').replaceAll('rent', '').trim();
+            String listingBase = listingSubcategory.replaceAll('_rent', '').replaceAll('rent', '').trim();
+            if (selectedBase.isNotEmpty && (listingBase.contains(selectedBase) || selectedBase.contains(listingBase))) {
+              matches = true;
+            }
+          }
+        }
+        
+        if (selectedSubcategoryId.contains('sale')) {
+          if (listingSubcategory.contains('sale')) {
+            String selectedBase = selectedSubcategoryId.replaceAll('_sale', '').replaceAll('sale', '').trim();
+            String listingBase = listingSubcategory.replaceAll('_sale', '').replaceAll('sale', '').trim();
+            if (selectedBase.isNotEmpty && (listingBase.contains(selectedBase) || selectedBase.contains(listingBase))) {
+              matches = true;
+            }
+          }
+        }
+        
+        // Additional flexible matching
+        if (listingSubcategory.contains(selectedSubcategoryId.replaceAll('_', '')) ||
+            selectedSubcategoryId.contains(listingSubcategory.replaceAll('_', ''))) {
+          matches = true;
+        }
+        
+  // subcategory match debug removed
+        
+        return matches;
+      }).toList();
+      
+  // subcategory filter count: filtered.length
+    }
+
+    // Apply other filters
     if (_selectedPriceRange != null && _selectedPriceRange != 'Any') {
       filtered = filtered.where((listing) {
         switch (_selectedPriceRange) {
@@ -144,12 +251,12 @@ class _HomePageState extends State<HomePage> {
       }).toList();
     }
 
-    // Location filter
     if (_selectedLocation != null && _selectedLocation != 'Any Location') {
-      filtered = filtered.where((listing) => listing.location.toLowerCase().contains(_selectedLocation!.toLowerCase())).toList();
+      filtered = filtered.where((listing) {
+        return listing.location.toLowerCase().contains(_selectedLocation!.toLowerCase());
+      }).toList();
     }
 
-    // Sorting
     if (_selectedSortBy != null) {
       switch (_selectedSortBy) {
         case 'Price: Low to High':
@@ -167,114 +274,96 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
-    // Re-apply promotional ordering within filtered subset
-    List<Listing> ordered;
-    try {
-      ordered = await PromotionFairService.orderFairly(filtered);
-    } catch (_) {
-      ordered = _applyPromotionOrdering(filtered);
+  // Always apply promoted/featured priority before exposing filtered results
+  _sortListings(filtered);
+  // filtering complete
+
+    if (mounted && !_isLoading) {
+      setState(() {
+        _currentPage = 0;
+        int endIndex = (_pageSize < filtered.length) ? _pageSize : filtered.length;
+        _displayedListings = filtered.take(endIndex).toList();
+        _listingsFuture = Future.value(_displayedListings);
+      });
     }
-    if (!mounted) return;
-    setState(() {
-      _currentPage = 0;
-      int endIndex = (_pageSize < ordered.length) ? _pageSize : ordered.length;
-      _displayedListings = ordered.take(endIndex).toList();
-      _listingsFuture = Future.value(_displayedListings);
+  }
+
+  Widget _buildRecommendedCarousel() {
+    if (_recommended.isEmpty && !_loadingRecommended) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4),
+        child: Text('No personalized recommendations yet', style: TextStyle(color: AppColor.textSecondary, fontSize: 12)),
+      );
+    }
+    return SizedBox(
+      height: 210,
+      child: ListView.separated(
+        padding: EdgeInsets.symmetric(horizontal: 12),
+        scrollDirection: Axis.horizontal,
+        itemCount: _recommended.length.clamp(0, 20),
+        separatorBuilder: (_, __) => SizedBox(width: 10),
+        itemBuilder: (ctx, i) {
+          final l = _recommended[i];
+          return GestureDetector(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingDetailPage(listing: l))),
+            child: Container(
+              width: 150,
+              decoration: BoxDecoration(
+                color: AppColor.cardBackground,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColor.border.withOpacity(0.5)),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 3, offset: Offset(0,2))],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                    child: AspectRatio(
+                      aspectRatio: 4/3,
+                      child: l.images.isNotEmpty
+                          ? Image.network(l.images.first, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: Icon(Icons.image_not_supported)))
+                          : Container(color: Colors.grey.shade100, child: Icon(Icons.photo, color: Colors.grey)),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(l.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: AppColor.textDark)),
+                        SizedBox(height: 2),
+                        Text(l.formattedPrice, style: TextStyle(fontSize: 12, color: AppColor.primary, fontWeight: FontWeight.w600)),
+                        SizedBox(height: 2),
+                        Text(l.category, style: TextStyle(fontSize: 10, color: AppColor.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Ensure promoted listings appear first, then featured, then newest
+  void _sortListings(List<Listing> list) {
+    list.sort((a, b) {
+      final promo = (b.isPromoted ? 1 : 0) - (a.isPromoted ? 1 : 0);
+      if (promo != 0) return promo;
+      final feat = (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
+      if (feat != 0) return feat;
+      return b.createdAt.compareTo(a.createdAt);
     });
-    _recordInitialImpressions();
-  }
-
-  // Promotional ordering logic
-  List<Listing> _applyPromotionOrdering(List<Listing> input) {
-    if (input.isEmpty) return input;
-
-    // Separate buckets
-    final featured = <Listing>[];
-    final promotedOnly = <Listing>[];
-    final regular = <Listing>[];
-    for (final l in input) {
-      if (l.isFeatured) {
-        featured.add(l);
-      } else if (l.isPromoted) {
-        promotedOnly.add(l);
-      } else {
-        regular.add(l);
-      }
-    }
-
-    // Sort buckets (newest & lightly weighted by viewCount)
-    int compare(Listing a, Listing b) {
-      final scoreA = a.createdAt.millisecondsSinceEpoch + (a.viewCount * 1000);
-      final scoreB = b.createdAt.millisecondsSinceEpoch + (b.viewCount * 1000);
-      return scoreB.compareTo(scoreA); // desc
-    }
-    featured.sort(compare);
-    promotedOnly.sort(compare);
-
-    final result = <Listing>[];
-    const int maxTop = 2;
-    // Fill top spots: prefer featured first then promoted
-    final promoQueue = <Listing>[]..addAll(featured)..addAll(promotedOnly);
-    final usedIds = <String>{};
-    for (var i = 0; i < maxTop && promoQueue.isNotEmpty; i++) {
-      final pick = promoQueue.removeAt(0);
-      result.add(pick);
-      usedIds.add(pick.id);
-      featured.removeWhere((e) => e.id == pick.id);
-      promotedOnly.removeWhere((e) => e.id == pick.id);
-    }
-
-    // Prepare remaining promo items (featured > promoted) for later insertion
-    final remainingPromos = <Listing>[]..addAll(featured)..addAll(promotedOnly);
-
-    if (remainingPromos.isEmpty) {
-      // Just append regular then return
-      for (final r in regular) { if (!usedIds.contains(r.id)) result.add(r); }
-      // Append any leftovers (shouldn't exist now)
-      for (final p in remainingPromos) { if (!usedIds.contains(p.id)) result.add(p); }
-      return result;
-    }
-
-    // Deterministic pseudo-random spacing between 5-9
-    final seed = DateTime.now().day + DateTime.now().month * 31;
-    int intervalForIndex(int idx) => 5 + ((seed + idx) % 5); // yields 5..9
-
-    int sinceLastInsert = 0;
-    int promoIdx = 0;
-    int currentInterval = intervalForIndex(0);
-
-    for (final r in regular) {
-      result.add(r);
-      sinceLastInsert++;
-      if (promoIdx < remainingPromos.length && sinceLastInsert >= currentInterval) {
-        result.add(remainingPromos[promoIdx]);
-        usedIds.add(remainingPromos[promoIdx].id);
-        promoIdx++;
-        sinceLastInsert = 0;
-        currentInterval = intervalForIndex(promoIdx);
-      }
-    }
-    // Append any leftover promos if not yet inserted
-    while (promoIdx < remainingPromos.length) {
-      result.add(remainingPromos[promoIdx]);
-      promoIdx++;
-    }
-
-    return result;
-  }
-
-  void _recordInitialImpressions() {
-    // Record impressions for first screenful (e.g., first 15 items)
-    final slice = _displayedListings.take(15).where((l) => l.isPromoted || l.isFeatured).map((l) => l.id).toList();
-    if (slice.isEmpty) return;
-    PromotionFairService.recordImpressions(slice);
   }
 
   Future<void> _debugDatabaseContent() async {
     try {
-  // Debug helper removed
+      await ListingService.debugCategoriesInDatabase();
     } catch (e) {
-  // Suppressed debug print
+  AppLogger.e('Error debugging database', e);
     }
   }
 
@@ -299,11 +388,44 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _refreshListings() async {
     if (selectedCategory == null && selectedSubcategory == null) {
-  // Removed debug log
+  AppLogger.d('Refreshing all listings from database...');
       await _loadAllListings();
     } else {
-  // Removed debug log
+  AppLogger.d('Applying filters to cached data...');
       _filterListings();
+    }
+  }
+
+  /// Public method invoked from navigation (e.g., tapping Home icon) to force a feed refresh
+  Future<void> refreshFromNav() async {
+    // Ensure drawer is closed when returning
+    closeDrawerIfOpen();
+    // Scroll to top first for better UX
+    if (mounted) {
+      try {
+        await _scrollController.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      } catch (_) {}
+    }
+    await _refreshListings();
+  }
+
+  /// Close drawer if it's currently open to avoid persisting overlay when navigating back.
+  void closeDrawerIfOpen() {
+    final scaffoldState = _scaffoldKey.currentState;
+    if (scaffoldState != null && scaffoldState.isDrawerOpen) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// Stronger variant used by the tab switcher to guarantee the drawer closes.
+  Future<void> forceCloseDrawer() async {
+    final scaffoldState = _scaffoldKey.currentState;
+    if (scaffoldState == null) return;
+    int safety = 2; // attempt twice in case of timing
+    while (scaffoldState.isDrawerOpen && safety-- > 0) {
+      Navigator.of(scaffoldState.context).pop();
+      // brief delay to let framework process the pop
+      await Future.delayed(const Duration(milliseconds: 30));
     }
   }
 
@@ -382,28 +504,39 @@ class _HomePageState extends State<HomePage> {
               flex: 2,
               child: SizedBox(
                 height: 40,
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search...',
-                    hintStyle: TextStyle(color: AppColor.placeholder, fontSize: 14),
-                    prefixIcon: Icon(Icons.search, color: AppColor.iconSecondary, size: 20),
-                    filled: true,
-                    fillColor: AppColor.inputBackground,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-                    border: OutlineInputBorder(
+                child: GestureDetector(
+                  onTap: () {
+                    // Open full search experience page
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const SearchPage(),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColor.inputBackground,
                       borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(color: AppColor.inputBorder),
+                      border: Border.all(color: AppColor.inputBorder),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(color: AppColor.inputBorder),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(color: AppColor.inputFocusBorder, width: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.search, color: AppColor.iconSecondary, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Search products, categories...',
+                            style: TextStyle(
+                              color: AppColor.placeholder,
+                              fontSize: 14,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  style: TextStyle(fontSize: 14, color: AppColor.textPrimary),
                 ),
               ),
             ),
@@ -413,7 +546,7 @@ class _HomePageState extends State<HomePage> {
           PopupMenuButton<String>(
             icon: Icon(Icons.language, color: AppColor.textLight),
             onSelected: (String language) {
-              // Removed debug log
+              AppLogger.d('Selected language: $language');
             },
             itemBuilder: (BuildContext context) => [
               PopupMenuItem(value: 'en', child: Text('English')),
@@ -669,6 +802,28 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_recommended.isNotEmpty || _loadingRecommended) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8),
+                  child: Row(
+                    children: [
+                      Text('Recommended for you', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColor.textDark)),
+                      if (_loadingRecommended) ...[
+                        SizedBox(width: 8), SizedBox(width:16,height:16,child: CircularProgressIndicator(strokeWidth:2))
+                      ],
+                      Spacer(),
+                      if (_recommended.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Refresh',
+                          icon: Icon(Icons.refresh, size: 20),
+                          onPressed: _loadingRecommended ? null : _loadRecommendations,
+                        ),
+                    ],
+                  ),
+                ),
+                _buildRecommendedCarousel(),
+                SizedBox(height: 12),
+              ],
               Text(
                 'Advanced Filters',
                 style: TextStyle(
@@ -879,7 +1034,6 @@ class _HomePageState extends State<HomePage> {
     if (_isGridView) {
       return GridView.builder(
         controller: _scrollController,
-  physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(16),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
@@ -905,7 +1059,6 @@ class _HomePageState extends State<HomePage> {
     } else {
       return ListView.builder(
         controller: _scrollController,
-  physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(16),
         itemCount: _displayedListings.length + (_isLoadingMore ? 1 : 0),
         itemBuilder: (context, index) {
@@ -927,61 +1080,72 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildImprovedListItem(listing) {
-    final bool featured = listing.isFeatured == true;
-    final bool promoted = listing.isPromoted == true && !featured;
-    final Color accent = featured
-        ? const Color(0xFFE3F2FD)
-        : promoted
-            ? const Color(0xFFFFF8E1)
-            : AppColor.cardBackground;
-    final Color borderColor = featured
-        ? const Color(0xFF42A5F5)
-        : promoted
-            ? const Color(0xFFFFC107)
-            : AppColor.borderLight;
-
+    final bool isPromoted = listing.isPromoted == true;
+    final bool isFeatured = listing.isFeatured == true && !isPromoted;
     return Container(
       margin: EdgeInsets.only(bottom: 16),
-      // Removed maxHeight to prevent RenderFlex overflow; allow natural growth
-      constraints: BoxConstraints(minHeight: 120),
+  // Allow height to grow (fix overflow when badges + longer text)
+  constraints: BoxConstraints(minHeight: 120),
       decoration: BoxDecoration(
-        color: accent,
-        borderRadius: BorderRadius.circular(18),
+        // Only promoted gets special background; others revert to original card background
+        color: isPromoted ? Colors.amber.shade100 : AppColor.cardBackground,
+        gradient: isPromoted
+            ? LinearGradient(
+                colors: [
+                  Colors.amber.shade200,
+                  Colors.amber.shade100,
+                  Colors.amber.shade50,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          if (featured || promoted)
+          if (isPromoted)
             BoxShadow(
-              color: borderColor.withOpacity(0.25),
+              color: Colors.amber.withOpacity(0.35),
+              offset: Offset(0, 6),
+              blurRadius: 18,
+              spreadRadius: 0,
+            )
+          else if (isFeatured)
+            BoxShadow(
+              color: AppColor.primary.withOpacity(0.2),
               offset: Offset(0, 4),
               blurRadius: 14,
+              spreadRadius: 0,
             )
-          else
+          else ...[
             BoxShadow(
-              color: AppColor.shadowColor.withOpacity(0.08),
+              color: AppColor.shadowColor.withOpacity(0.1),
               offset: Offset(0, 4),
               blurRadius: 12,
               spreadRadius: 0,
             ),
+            BoxShadow(
+              color: AppColor.shadowColor.withOpacity(0.05),
+              offset: Offset(0, 2),
+              blurRadius: 6,
+              spreadRadius: 0,
+            ),
+          ],
         ],
         border: Border.all(
-          color: borderColor,
-          width: (featured || promoted) ? 2 : 1,
+          color: isPromoted
+              ? Colors.amber.shade600
+              : isFeatured
+                  ? AppColor.primary
+                  : AppColor.borderLight,
+          width: isPromoted || isFeatured ? 2 : 1,
         ),
-        gradient: (featured || promoted)
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  (featured ? const Color(0xFFBBDEFB) : const Color(0xFFFFE082)).withOpacity(0.55),
-                  accent
-                ],
-              )
-            : null,
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () {
+            AppLogger.d('Tapping listing: ${listing.title}');
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -992,11 +1156,13 @@ class _HomePageState extends State<HomePage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Image on the left
               ClipRRect(
                 borderRadius: BorderRadius.horizontal(left: Radius.circular(16)),
                 child: Container(
-                  width: 100,
-                  constraints: BoxConstraints(minHeight: 120, maxHeight: 140),
+                    width: 100,
+                    // Let image adapt to parent height (no fixed max to avoid overflow)
+                    constraints: BoxConstraints(minHeight: 120),
                   color: AppColor.inputBackground,
                   child: listing.images.isNotEmpty
                       ? Image.network(
@@ -1026,6 +1192,7 @@ class _HomePageState extends State<HomePage> {
                       : Icon(Icons.image, size: 32, color: AppColor.textSecondary),
                 ),
               ),
+              // Content on the right
               Expanded(
                 child: Padding(
                   padding: EdgeInsets.all(12),
@@ -1033,41 +1200,52 @@ class _HomePageState extends State<HomePage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (featured || promoted)
-                        Align(
-                          alignment: Alignment.topLeft,
-                          child: _buildPromoTag(featured: featured),
+                      // Badges Row
+                      if (isPromoted || isFeatured)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4.0),
+                          child: Row(
+                            children: [
+                              if (isPromoted) _buildBadge('PROMOTED', Colors.amber.shade400, Colors.black87),
+                              if (isFeatured) _buildBadge('FEATURED', AppColor.accent, Colors.white),
+                            ],
+                          ),
                         ),
-                      if (featured || promoted) SizedBox(height: 4),
+                      // Title
                       Text(
                         listing.title,
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: AppColor.textPrimary,
+                          color: isPromoted ? Colors.brown.shade800 : AppColor.textPrimary,
                           height: 1.2,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      SizedBox(height: 2),
+                      SizedBox(height: 4),
+                      // Description
                       Text(
                         listing.description,
                         style: TextStyle(
                           fontSize: 12,
-                          color: AppColor.textSecondary,
+                          color: isPromoted ? Colors.brown.shade700.withOpacity(.85) : AppColor.textSecondary,
                           height: 1.3,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       SizedBox(height: 6),
-                      Column(
+                      // Bottom section with organized rows
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
                         children: [
+                          // First row: Location and Category tag
                           Row(
                             children: [
+                              // Location
                               Expanded(
                                 child: Row(
                                   children: [
@@ -1092,6 +1270,7 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                               SizedBox(width: 6),
+                              // Category tag
                               Container(
                                 padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
@@ -1107,17 +1286,19 @@ class _HomePageState extends State<HomePage> {
                                   style: TextStyle(
                                     fontSize: 8,
                                     fontWeight: FontWeight.w600,
-                                    color: AppColor.primary,
+                                    color: isPromoted ? Colors.brown.shade800 : AppColor.primary,
                                     letterSpacing: 0.3,
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                          SizedBox(height: 4),
+                          SizedBox(height: 6),
+                          // Second row: Price and Subcategory tag
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
+                              // Price
                               Container(
                                 padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
@@ -1129,10 +1310,11 @@ class _HomePageState extends State<HomePage> {
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w700,
-                                    color: Colors.green[700],
+                                    color: isPromoted ? Colors.green.shade800 : Colors.green[700],
                                   ),
                                 ),
                               ),
+                              // Subcategory tag (if available)
                               if (listing.subcategory.isNotEmpty)
                                 Container(
                                   padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1152,6 +1334,7 @@ class _HomePageState extends State<HomePage> {
                             ],
                           ),
                         ],
+                        ),
                       ),
                     ],
                   ),
@@ -1165,28 +1348,37 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildImprovedGridItem(listing) {
-    final bool featured = listing.isFeatured == true;
-    final bool promoted = listing.isPromoted == true && !featured;
-    final Color accent = featured
-        ? const Color(0xFFE3F2FD)
-        : promoted
-            ? const Color(0xFFFFF8E1)
-            : AppColor.cardBackground;
-    final Color borderColor = featured
-        ? const Color(0xFF42A5F5)
-        : promoted
-            ? const Color(0xFFFFC107)
-            : AppColor.borderLight;
+    final bool isPromoted = listing.isPromoted == true;
+    final bool isFeatured = listing.isFeatured == true && !isPromoted;
     return Container(
       decoration: BoxDecoration(
-        color: accent,
-        borderRadius: BorderRadius.circular(14),
+        color: isPromoted ? Colors.amber.shade100 : AppColor.cardBackground,
+        gradient: isPromoted
+            ? LinearGradient(
+                colors: [
+                  Colors.amber.shade200,
+                  Colors.amber.shade100,
+                  Colors.amber.shade50,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          if (featured || promoted)
+          if (isPromoted)
             BoxShadow(
-              color: borderColor.withOpacity(0.25),
+              color: Colors.amber.withOpacity(0.35),
               offset: Offset(0, 4),
-              blurRadius: 10,
+              blurRadius: 14,
+              spreadRadius: 0,
+            )
+          else if (isFeatured)
+            BoxShadow(
+              color: AppColor.primary.withOpacity(0.18),
+              offset: Offset(0, 3),
+              blurRadius: 12,
+              spreadRadius: 0,
             )
           else
             BoxShadow(
@@ -1197,28 +1389,20 @@ class _HomePageState extends State<HomePage> {
             ),
         ],
         border: Border.all(
-          color: borderColor,
-          width: (featured || promoted) ? 2 : 1,
+          color: isPromoted
+              ? Colors.amber.shade600
+              : isFeatured
+                  ? AppColor.primary
+                  : AppColor.borderLight,
+          width: isPromoted || isFeatured ? 2 : 1,
         ),
-        gradient: (featured || promoted)
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  (featured
-                          ? const Color(0xFFBBDEFB)
-                          : const Color(0xFFFFE082))
-                      .withOpacity(0.6),
-                  accent
-                ],
-              )
-            : null,
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () {
+            AppLogger.d('Tapping listing: ${listing.title}');
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -1232,60 +1416,68 @@ class _HomePageState extends State<HomePage> {
               // Image section
               Expanded(
                 flex: 2,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                  child: Container(
-                    width: double.infinity,
-                    color: AppColor.inputBackground,
-                    child: listing.images.isNotEmpty
-                        ? Image.network(
-                            listing.images.first,
-                            fit: BoxFit.contain,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(AppColor.primary),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                      child: Container(
+                        width: double.infinity,
+                        color: AppColor.inputBackground,
+                        child: listing.images.isNotEmpty
+                            ? Image.network(
+                                listing.images.first,
+                                fit: BoxFit.contain,
+                                loadingBuilder: (context, child, loadingProgress) {
+                                  if (loadingProgress == null) return child;
+                                  return Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(AppColor.primary),
+                                      ),
                                     ),
-                                  ),
+                                  );
+                                },
+                                errorBuilder: (context, error, stackTrace) => Container(
+                                  color: AppColor.placeholder.withOpacity(0.3),
+                                  child: Icon(Icons.image_not_supported, size: 32, color: AppColor.textSecondary),
                                 ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) => Container(
-                              color: AppColor.placeholder.withOpacity(0.3),
-                              child: Icon(Icons.image_not_supported, size: 32, color: AppColor.textSecondary),
-                            ),
-                          )
-                        : Icon(Icons.image, size: 32, color: AppColor.textSecondary),
-                  ),
+                              )
+                            : Icon(Icons.image, size: 32, color: AppColor.textSecondary),
+                      ),
+                    ),
+                    if (isPromoted || isFeatured)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Row(
+                          children: [
+                            if (isPromoted) _buildBadge('PROMOTED', Colors.amber.shade400, Colors.black87, dense: true),
+                            if (isFeatured) _buildBadge('FEATURED', AppColor.accent, Colors.white, dense: true),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
               ),
               // Content section - Made smaller
               Expanded(
-                flex: 1,
+                flex: 1, // Compact content section
                 child: Padding(
-                  padding: EdgeInsets.all(6),
+                  padding: EdgeInsets.all(4), // Ultra minimal padding
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (featured || promoted)
-                        Align(
-                          alignment: Alignment.topLeft,
-                          child: _buildPromoTag(featured: featured, compact: true),
-                        ),
-                      if (featured || promoted) SizedBox(height: 4),
+                      // Badges in list layout (if any) appear over image; here we only show title
                       // Title
                       Text(
                         listing.title,
                         style: TextStyle(
                           fontSize: 12, // Readable title
                           fontWeight: FontWeight.w600,
-                          color: AppColor.textPrimary,
+                          color: isPromoted ? Colors.brown.shade800 : AppColor.textPrimary,
                           height: 1.2,
                         ),
                         maxLines: 2,
@@ -1297,7 +1489,7 @@ class _HomePageState extends State<HomePage> {
                         listing.description,
                         style: TextStyle(
                           fontSize: 10, // Readable description
-                          color: AppColor.textSecondary,
+                          color: isPromoted ? Colors.brown.shade700.withOpacity(.85) : AppColor.textSecondary,
                           height: 1.3,
                         ),
                         maxLines: 1, // Reduced from 2
@@ -1412,28 +1604,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildPromoTag({required bool featured, bool compact = false}) {
-    final color = featured ? const Color(0xFF0277BD) : const Color(0xFFFF8F00);
-    final bg = featured ? const Color(0xFFB3E5FC) : const Color(0xFFFFECB3);
-    final label = featured ? 'FEATURED' : 'PROMOTED';
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 10, vertical: compact ? 2 : 4),
-      decoration: BoxDecoration(
-        color: bg.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color, width: 1),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(featured ? Icons.star : Icons.trending_up, size: compact ? 12 : 14, color: color),
-          SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: compact ? 9 : 11, fontWeight: FontWeight.w700, color: color, letterSpacing: 0.5)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildNotificationIcon() {
     final currentUser = SupabaseHelper.currentUser;
     
@@ -1497,5 +1667,32 @@ class _HomePageState extends State<HomePage> {
     
     final colorIndex = subcategory.hashCode.abs() % colors.length;
     return colors[colorIndex];
+  }
+
+  Widget _buildBadge(String text, Color bg, Color fg, {bool dense = false}) {
+    return Container(
+      margin: EdgeInsets.only(right: 6),
+      padding: EdgeInsets.symmetric(horizontal: dense ? 6 : 8, vertical: dense ? 2 : 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: bg.withOpacity(0.4),
+            blurRadius: 6,
+            offset: Offset(0, 2),
+          )
+        ],
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: fg,
+          fontSize: dense ? 8.5 : 10,
+          fontWeight: FontWeight.bold,
+          letterSpacing: .5,
+        ),
+      ),
+    );
   }
 }

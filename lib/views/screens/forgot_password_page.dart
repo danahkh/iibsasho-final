@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../constant/app_color.dart';
+<<<<<<< HEAD
 import '../../core/services/password_reset_service.dart';
+=======
+>>>>>>> c9b83a2 (Backup and sync: create local backup folder and prepare push to final repo)
 
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -221,7 +224,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     });
 
     try {
+<<<<<<< HEAD
   await PasswordResetService.sendResetEmail(_emailController.text.trim());
+=======
+      await Supabase.instance.client.auth.resetPasswordForEmail(
+        _emailController.text.trim(),
+      );
+>>>>>>> c9b83a2 (Backup and sync: create local backup folder and prepare push to final repo)
 
       if (mounted) {
         setState(() {
@@ -229,8 +238,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         });
         
         ScaffoldMessenger.of(context).showSnackBar(
+<<<<<<< HEAD
           const SnackBar(
             content: Text('Reset email sent successfully. Check your inbox.'),
+=======
+          SnackBar(
+            content: Text('Reset email sent successfully'),
+>>>>>>> c9b83a2 (Backup and sync: create local backup folder and prepare push to final repo)
             backgroundColor: Colors.green,
           ),
         );

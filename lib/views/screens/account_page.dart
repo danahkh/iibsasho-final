@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../../constant/app_color.dart';
 import '../../core/utils/supabase_helper.dart';
+import '../../core/utils/app_logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AccountPage extends StatefulWidget {
@@ -119,10 +120,10 @@ class _AccountPageState extends State<AccountPage> {
         imageUrl = SupabaseHelper.client.storage
             .from('listings')
             .getPublicUrl(fileName);
-  // Removed debug log
+  AppLogger.i('Profile image uploaded to listings bucket');
         return imageUrl;
       } catch (e) {
-  // Suppressed debug print
+        AppLogger.w('Failed to upload to listings bucket: $e');
         
         // Try creating avatars bucket if it doesn't exist
         try {
@@ -132,15 +133,15 @@ class _AccountPageState extends State<AccountPage> {
           imageUrl = SupabaseHelper.client.storage
               .from('avatars')
               .getPublicUrl(fileName);
-          // Removed debug log
+          AppLogger.i('Profile image uploaded to avatars bucket');
           return imageUrl;
         } catch (e2) {
-          // Suppressed debug print
+          AppLogger.e('Failed to upload to avatars bucket', e2);
           throw Exception('Failed to upload profile image to any available bucket');
         }
       }
     } catch (e) {
-  // Suppressed debug print
+      AppLogger.e('Profile image upload failed', e);
       return null;
     }
   }
@@ -362,8 +363,8 @@ class _AccountPageState extends State<AccountPage> {
                   ),
                   // Location display removed as field doesn't exist in database
                   SizedBox(height: 8),
-          // Verification status
-          Container(
+                  // Verification status
+                  Container(
                     padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: user?.emailConfirmedAt != null 
@@ -380,9 +381,9 @@ class _AccountPageState extends State<AccountPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-              user?.emailConfirmedAt != null 
-                ? Icons.verified 
-                : Icons.verified_outlined,
+                          user?.emailConfirmedAt != null 
+                              ? Icons.verified 
+                              : Icons.pending,
                           size: 16,
                           color: user?.emailConfirmedAt != null 
                               ? AppColor.success 
@@ -390,9 +391,9 @@ class _AccountPageState extends State<AccountPage> {
                         ),
                         SizedBox(width: 4),
                         Text(
-              user?.emailConfirmedAt != null 
-                ? 'Verified' 
-                : 'Unverified',
+                          user?.emailConfirmedAt != null 
+                              ? 'Verified' 
+                              : 'Pending Verification',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -761,20 +762,20 @@ class _AccountPageState extends State<AccountPage> {
               bool imageUploadSucceeded = true;
               
               if (_imageFile != null) {
-                // Removed debug log
+                AppLogger.d('Attempting profile image upload');
                 final uploadedImageUrl = await _uploadProfileImage(_imageFile!);
                 if (uploadedImageUrl != null) {
                   updateData['profile_image_url'] = uploadedImageUrl;
-                  // Removed debug log
+                  AppLogger.i('Profile image upload successful');
                 } else {
                   uploadError = 'Image upload failed, but profile info was updated';
                   imageUploadSucceeded = false;
-                  // Removed debug log
+                  AppLogger.w('Profile image upload failed');
                 }
               }
               
               // Always attempt to update profile data (even if image fails)
-              // Removed debug log
+              AppLogger.d('Updating profile data: $updateData');
               final success = await SupabaseHelper.updateUserProfile(updateData);
               
               // Hide loading indicator

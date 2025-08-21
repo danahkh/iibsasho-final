@@ -5,8 +5,7 @@ import '../../constant/app_color.dart';
 import '../../core/utils/supabase_helper.dart';
 import 'page_switcher.dart';
 import 'register_page.dart';
-import 'database_test_page.dart';
-import 'forgot_password_page.dart';
+import '../../core/utils/app_logger.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -23,7 +22,7 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _login() async {
     setState(() { _loading = true; _error = null; });
     
-  // Removed debug log
+  AppLogger.d('Attempting login with email: ${_emailController.text.trim()}');
     
     try {
       final response = await SupabaseHelper.client.auth.signInWithPassword(
@@ -31,23 +30,23 @@ class _LoginPageState extends State<LoginPage> {
         password: _passwordController.text.trim(),
       );
       
-  // Removed debug log
+  AppLogger.d('Login response user: ${response.user?.email}');
       
       // Ensure user profile exists in users table
       final user = response.user;
       if (user != null) {
-  // Removed debug log
+  AppLogger.d('Creating/updating user profile');
         await SupabaseHelper.upsertUserProfile({
           'email': user.email,
         });
-  // Removed debug log
+  AppLogger.i('Profile updated successfully');
       }
       
       if (mounted) {
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (context) => PageSwitcher()));
       }
     } catch (e) {
-  // Suppressed debug print
+  AppLogger.e('Login error', e);
       setState(() { 
         _error = _getErrorMessage(e.toString());
       });
@@ -298,11 +297,7 @@ class _LoginPageState extends State<LoginPage> {
           Container(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
-                );
-              },
+              onPressed: () {},
               style: TextButton.styleFrom(
                 foregroundColor: AppColor.primary.withOpacity(0.1),
               ),
@@ -317,16 +312,6 @@ class _LoginPageState extends State<LoginPage> {
             SizedBox(height: 8),
             Text(_error!, style: TextStyle(color: Colors.red)),
             SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).push(MaterialPageRoute(builder: (context) => DatabaseTestPage()));
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              ),
-              child: Text('Debug Database', style: TextStyle(color: Colors.white)),
-            ),
           ],
           // Sign In button
           ElevatedButton(

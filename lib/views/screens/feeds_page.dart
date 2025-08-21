@@ -4,8 +4,9 @@ import 'package:iibsasho/views/widgets/main_app_bar_widget.dart';
 import 'package:iibsasho/core/model/listing.dart';
 import 'package:iibsasho/core/services/listing_service.dart';
 import 'package:iibsasho/views/screens/product_detail.dart';
-import 'package:iibsasho/views/screens/listing_form_page.dart';
+import 'listing_form_page.dart';
 import '../../core/constant_categories.dart';
+import '../../core/utils/supabase_helper.dart';
 
 class FeedsPage extends StatefulWidget {
   const FeedsPage({super.key});
@@ -22,17 +23,43 @@ class _FeedsPageState extends State<FeedsPage> with TickerProviderStateMixin {
   // Static categories for the feed page
   final List<CategoryItem> staticCategories = AppCategories.categories;
 
+  void _sortListings(List<Listing> list) {
+    list.sort((a, b) {
+      int p = (b.isPromoted ? 1 : 0) - (a.isPromoted ? 1 : 0);
+      if (p != 0) return p;
+      int f = (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
+      if (f != 0) return f;
+      return b.createdAt.compareTo(a.createdAt);
+    });
+  }
+
   Future<void> _refreshListings() async {
     setState(() => _loading = true);
-    _listings = await ListingService().fetchListings();
-    setState(() => _loading = false);
+    try {
+      final listings = await ListingService.fetchListings();
+      setState(() {
+        _listings = listings;
+        _sortListings(_listings);
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load listings: $e'),
+            backgroundColor: AppColor.error,
+          ),
+        );
+      }
+    }
   }
 
   @override
   void initState() {
     super.initState();
     selectedCategory = staticCategories.first;
-    // _refreshListings(); // Only refresh on pull-to-refresh
+    _refreshListings(); // Load listings when page loads
   }
 
   @override
@@ -145,18 +172,70 @@ class _FeedsPageState extends State<FeedsPage> with TickerProviderStateMixin {
                                   (searchQuery.isEmpty || listing.title.toLowerCase().contains(searchQuery.toLowerCase()) || listing.description.toLowerCase().contains(searchQuery.toLowerCase()))
                                 )
                                 .toList();
+                            // Already globally sorted; keep order when filtered by maintaining original order
+                            // but we may re-apply stable sort on the filtered subset
+                            _sortListings(filteredListings);
                             final listing = filteredListings[index];
-                            return ListTile(
-                              title: Text(listing.title, style: TextStyle(color: AppColor.textBlack)),
-                              subtitle: Text(listing.description, style: TextStyle(color: AppColor.textDark.withOpacity(0.7))),
-                              trailing: Text('\u20a6${listing.price}', style: TextStyle(color: AppColor.primary)),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (context) => ListingDetailPage(listing: listing),
+
+                            Widget badge(String text, Color bg, Color fg) => Container(
+                                  margin: const EdgeInsets.only(left: 6),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
+                                  child: Text(text, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
                                 );
-                              },
+
+                            final promoted = listing.isPromoted;
+                            final featured = listing.isFeatured && !promoted;
+
+                            return Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: promoted
+                                  ? BoxDecoration(
+                                      color: Colors.amber.shade50,
+                                      border: Border.all(color: Colors.amber.shade400, width: 1),
+                                      borderRadius: BorderRadius.circular(12),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.amber.shade100.withOpacity(0.4),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
+                                        )
+                                      ],
+                                    )
+                                  : BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.grey.shade200),
+                                    ),
+                              child: ListTile(
+                                title: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        listing.title,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          color: promoted ? Colors.orange.shade800 : AppColor.textBlack,
+                                        ),
+                                      ),
+                                    ),
+                                    if (promoted) badge('PROMOTED', Colors.amber.shade400, Colors.black87),
+                                    if (featured) badge('FEATURED', Colors.blue.shade600, Colors.white),
+                                  ],
+                                ),
+                                subtitle: Text(listing.description, style: TextStyle(color: AppColor.textDark.withOpacity(0.7))),
+                                trailing: Text('\u20a6${listing.price}', style: TextStyle(color: promoted ? Colors.orange.shade800 : AppColor.primary, fontWeight: FontWeight.bold)),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => ListingDetailPage(listing: listing),
+                                    ),
+                                  );
+                                },
+                              ),
                             );
                           },
                         ),
@@ -166,6 +245,9 @@ class _FeedsPageState extends State<FeedsPage> with TickerProviderStateMixin {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
+          if (!SupabaseHelper.requireAuth(context, feature: 'add listing')) {
+            return;
+          }
           Navigator.of(context).push(
             MaterialPageRoute(builder: (context) => ListingFormPage()),
           );

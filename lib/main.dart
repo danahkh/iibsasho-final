@@ -4,9 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/utils/supabase_helper.dart';
+import 'core/utils/app_logger.dart';
 import 'views/screens/page_switcher.dart';
-import 'views/screens/password_reset_page.dart';
-import 'dart:async';
 
 // import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
@@ -23,9 +22,9 @@ void main() async {
       url: supabaseUrl,
       anonKey: supabaseAnonKey,
     );
-  // Initialization complete
+  AppLogger.i('Supabase initialized successfully');
   } catch (e) {
-  // Suppressed debug print
+  AppLogger.e('Error initializing Supabase', e);
     // Show error dialog or handle gracefully
   }
   
@@ -54,33 +53,10 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   Locale? _locale;
-  StreamSubscription<AuthState>? _authSub;
   void setLocale(Locale locale) {
     setState(() {
       _locale = locale;
     });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((event) {
-      if (event.event == AuthChangeEvent.passwordRecovery) {
-        Future.microtask(() {
-          if (mounted) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const PasswordResetPage()),
-            );
-          }
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _authSub?.cancel();
-    super.dispose();
   }
 
   @override

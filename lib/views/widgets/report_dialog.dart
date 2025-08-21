@@ -68,7 +68,7 @@ class _ReportDialogState extends State<ReportDialog> {
                     createdAt: DateTime.now(),
                     resolved: false,
                   );
-                  await ReportService().submitReport(report);
+                  await ReportService.submitReport(report);
                   setState(() => isLoading = false);
                   Navigator.of(context).pop(true);
                 },
