@@ -29,14 +29,7 @@ class CreateListingPage extends StatefulWidget {
   State<CreateListingPage> createState() => _CreateListingPageState();
 }
 
-// Private suggestion model for Nominatim results
-class _CitySuggestion {
-  final String displayName;
-  final String cityName;
-  final double lat;
-  final double lon;
-  const _CitySuggestion({required this.displayName, required this.cityName, required this.lat, required this.lon});
-}
+// Removed: free-form Nominatim suggestions model
 
 class _CreateListingPageState extends State<CreateListingPage> {
   final _formKey = GlobalKey<FormState>();
@@ -54,6 +47,47 @@ class _CreateListingPageState extends State<CreateListingPage> {
   bool _isNegotiable = false;
   bool _isLoading = false;
 
+  // Somalia cities (including major cities across all regions)
+  // Sorted alphabetically for better UX
+  final List<String> _somaliaCities = [
+    'Afgoye',
+    'Afmadow',
+    'Baidoa',
+    'Bandarbeyla',
+    'Bardera',
+    'Beledweyne',
+    'Berbera',
+    'Bosaso',
+    'Borama',
+    'Burao',
+    'Buurhakaba',
+    'Daynile',
+    'Dhusamareb',
+    'Eyl',
+    'Erigavo',
+    'Gaalkacyo',
+    'Gabiley',
+    'Garbahaarrey',
+    'Garoowe',
+    'Hargeisa',
+    'Hobyo',
+    'Jamaame',
+    'Jawhar',
+    'Jowhar',
+    'Kismayo',
+    'Las Anod',
+    'Luuq',
+    'Merca',
+    'Mogadishu',
+    'Qardho',
+    'Qoryooley',
+    'Sheikh',
+    'Wanlaweyn',
+    'Wajaale',
+    'Xarardheere',
+    'Xuddur',
+  ]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
   // Media
   final List<XFile> _selectedImages = [];
   List<String> _imageUrls = [];
@@ -67,9 +101,7 @@ class _CreateListingPageState extends State<CreateListingPage> {
   // Location
   LatLng? _selectedLocation;
   // GoogleMapController? _mapController; // Not used in this page
-  final TextEditingController _cityController = TextEditingController();
-  Timer? _cityDebounce;
-  List<_CitySuggestion> _citySuggestions = [];
+  // Geocoding loading state
   bool _loadingCity = false;
 
 
@@ -109,123 +141,81 @@ class _CreateListingPageState extends State<CreateListingPage> {
     }
   }
 
-  // --- City Autocomplete Helpers -------------------------------------------------
-  Widget _buildCityAutocompleteField() {
-    if (_selectedCity != null && _cityController.text.isEmpty) {
-      _cityController.text = _selectedCity!;
+  // Removed: free-form city autocomplete helpers
+
+  // Somalia-only city dropdown powered by Nominatim for coordinates
+  Widget _buildCityDropdownField() {
+    // If editing, ensure existing city is present in the dropdown list
+    final items = List<String>.from(_somaliaCities);
+    if (_selectedCity != null && _selectedCity!.isNotEmpty && !items.contains(_selectedCity)) {
+      items.add(_selectedCity!);
+      items.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextFormField(
-          controller: _cityController,
-          decoration: InputDecoration(
-            labelText: 'City *',
-            hintText: 'Type a city (worldwide)',
-            prefixIcon: Icon(Icons.location_city, color: AppColor.primary),
-            suffixIcon: _loadingCity
-                ? Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: SizedBox(width:16,height:16,child: CircularProgressIndicator(strokeWidth:2)),
-                  )
-                : (_cityController.text.isNotEmpty
-                    ? IconButton(icon: Icon(Icons.clear), onPressed: () { setState(() { _cityController.clear(); _citySuggestions.clear(); _selectedCity=null; _selectedLocation=null; }); })
-                    : null),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColor.primary, width: 2),
-            ),
-          ),
-          onChanged: (val) {
-            _selectedCity = val.trim();
-            _debouncedCityLookup(val);
-          },
-          validator: (val) {
-            if (val == null || val.trim().isEmpty) return 'Please enter a city';
-            if (val.trim().length < 2) return 'City name too short';
-            return null;
-          },
+
+    return DropdownButtonFormField<String>(
+      value: _selectedCity != null && items.contains(_selectedCity) ? _selectedCity : null,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: 'City *',
+        prefixIcon: Icon(Icons.location_city, color: AppColor.primary),
+        suffixIcon: _loadingCity
+            ? Padding(
+                padding: EdgeInsets.all(12),
+                child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            : null,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppColor.primary, width: 2),
         ),
-        if (_citySuggestions.isNotEmpty)
-          Container(
-            margin: EdgeInsets.only(top: 6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: AppColor.border),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0,2))],
-            ),
-            constraints: BoxConstraints(maxHeight: 200),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _citySuggestions.length,
-              itemBuilder: (ctx, i) {
-                final s = _citySuggestions[i];
-                return ListTile(
-                  dense: true,
-                  title: Text(s.displayName, style: TextStyle(fontSize: 14)),
-                  onTap: () {
-                    setState(() {
-                      _selectedCity = s.cityName;
-                      _cityController.text = s.cityName;
-                      _selectedLocation = LatLng(s.lat, s.lon);
-                      _citySuggestions.clear();
-                    });
-                  },
-                );
-              },
-            ),
-          ),
-  // Removed attribution text per user request
-      ],
+      ),
+      items: items.map((c) => DropdownMenuItem<String>(value: c, child: Text(c))).toList(),
+      onChanged: (val) async {
+        setState(() {
+          _selectedCity = val;
+        });
+        if (val != null && val.isNotEmpty) {
+          await _lookupLatLonForCity(val);
+        }
+      },
+      validator: (val) => val == null || val.isEmpty ? 'Please select a city' : null,
     );
   }
 
-  void _debouncedCityLookup(String input) {
-    _cityDebounce?.cancel();
-    if (input.trim().length < 3) {
-      setState(() { _citySuggestions.clear(); _loadingCity = false; });
-      return;
-    }
-    _cityDebounce = Timer(const Duration(milliseconds: 450), () {
-      _fetchCitySuggestions(input.trim());
-    });
-  }
-
-  Future<void> _fetchCitySuggestions(String query) async {
-    setState(() { _loadingCity = true; });
+  Future<void> _lookupLatLonForCity(String city) async {
+    setState(() => _loadingCity = true);
     try {
-      final uri = Uri.parse('https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&addressdetails=1&limit=8');
+      // Limit to Somalia using countrycodes=so and prefer the best match
+      final uri = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?q='
+        '${Uri.encodeComponent('$city, Somalia')}'
+        '&format=json&addressdetails=1&limit=1&countrycodes=so',
+      );
       final resp = await http.get(uri, headers: {
         'User-Agent': 'iibsasho-app/1.0 (contact: example@example.com)'
       });
       if (resp.statusCode == 200) {
-        final List data = json.decode(resp.body) as List;
-        final suggestions = <_CitySuggestion>[];
-        for (final item in data) {
-          final display = item['display_name']?.toString() ?? '';
-          final latStr = item['lat']?.toString();
-          final lonStr = item['lon']?.toString();
-          if (display.isEmpty || latStr == null || lonStr == null) continue;
-          final address = item['address'] ?? {};
-          final cityLike = address['city'] ?? address['town'] ?? address['village'] ?? address['municipality'] ?? address['state'] ?? display.split(',').first;
-          final lat = double.tryParse(latStr);
-          final lon = double.tryParse(lonStr);
-          if (lat == null || lon == null) continue;
-          suggestions.add(_CitySuggestion(displayName: display, cityName: cityLike.toString(), lat: lat, lon: lon));
+        final List list = json.decode(resp.body) as List;
+        if (list.isNotEmpty) {
+          final item = list.first;
+          final lat = double.tryParse(item['lat']?.toString() ?? '');
+          final lon = double.tryParse(item['lon']?.toString() ?? '');
+          if (lat != null && lon != null) {
+            setState(() {
+              _selectedLocation = LatLng(lat, lon);
+            });
+          }
         }
-        setState(() { _citySuggestions = suggestions; });
-      } else {
-        setState(() { _citySuggestions = []; });
       }
     } catch (e) {
-      setState(() { _citySuggestions = []; });
-  if (kDebugMode) AppLogger.w('City lookup error: $e');
+      if (kDebugMode) AppLogger.w('City geocode error: $e');
     } finally {
-      if (mounted) setState(() { _loadingCity = false; });
+      if (mounted) setState(() => _loadingCity = false);
     }
   }
+
+  // Removed: old debounced Nominatim search
 
   void _updateSubcategories() {
     if (_selectedCategory != null) {
@@ -241,8 +231,6 @@ class _CreateListingPageState extends State<CreateListingPage> {
     _titleController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
-  _cityController.dispose();
-  _cityDebounce?.cancel();
     super.dispose();
   }
 
@@ -975,7 +963,7 @@ class _CreateListingPageState extends State<CreateListingPage> {
           ),
           SizedBox(height: 16),
           
-          _buildCityAutocompleteField(),
+          _buildCityDropdownField(),
         ],
       ),
     );
