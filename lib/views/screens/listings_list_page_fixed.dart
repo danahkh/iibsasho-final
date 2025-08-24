@@ -35,7 +35,7 @@ class _ListingsListPageState extends State<ListingsListPage> {
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: SvgPicture.asset(
-              'assets/icons/iibsashologo.svg',
+              'assets/icons/iibsasho Logo.svg',
               height: 32,
               width: 32,
             ),

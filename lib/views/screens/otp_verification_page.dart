@@ -32,7 +32,7 @@ class _OTPVerificationPageState extends State<OTPVerificationPage> {
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: SvgPicture.asset(
-              'assets/icons/iibsashologo.svg',
+              'assets/icons/iibsasho Logo.svg',
               height: 32,
               width: 32,
             ),

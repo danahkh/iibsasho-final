@@ -14,9 +14,9 @@ class ChatService {
       final user = _supabase.auth.currentUser;
       if (user == null) throw 'User not authenticated';
 
-      // Create a consistent chat ID based on participants and listing
-      final participants = [user.id, otherUserId]..sort();
-      final chatId = '${participants[0]}_${participants[1]}_$listingId';
+  // Create a consistent chat ID based on participants and listing (TEXT id)
+  final participants = [user.id, otherUserId]..sort();
+  final chatId = '${participants[0]}_${participants[1]}_$listingId';
 
       final chatResponse = await _supabase
           .from('chats')
@@ -26,7 +26,7 @@ class ChatService {
       
       if (chatResponse == null) {
         // Create new chat
-        await _supabase.from('chats').insert({
+        final payload = {
           'id': chatId,
           'participants': participants,
           'listing_id': listingId,
@@ -42,7 +42,22 @@ class ChatService {
             user.id: 0,
             otherUserId: 0,
           }
-        });
+        };
+        try {
+          await _supabase.from('chats').insert(payload);
+        } catch (e) {
+          // If the table expects UUID id, fallback to generating one and store composite in a separate column if exists
+          try {
+            final uuid = _supabase.rpc('gen_random_uuid');
+            await _supabase.from('chats').insert({
+              ...payload,
+              'id': uuid,
+              'composite_id': chatId,
+            });
+          } catch (_) {
+            rethrow;
+          }
+        }
       }
 
       return chatId;

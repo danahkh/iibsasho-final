@@ -26,7 +26,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: SvgPicture.asset(
-              'assets/icons/iibsashologo.svg',
+              'assets/icons/iibsasho Logo.svg',
               height: 24, // Smaller logo
               width: 24,
             ),

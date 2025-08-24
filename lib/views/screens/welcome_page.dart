@@ -20,7 +20,7 @@ class WelcomePage extends StatelessWidget {
               margin: EdgeInsets.only(top: 32),
               width: 120,
               height: 120,
-              child: SvgPicture.asset('assets/icons/iibsashologo.svg'),
+              child: SvgPicture.asset('assets/icons/iibsasho Logo.svg'),
             ),
             // Section 1b - Illustration
             SizedBox(

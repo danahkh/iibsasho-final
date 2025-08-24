@@ -33,7 +33,7 @@ class CustomAppBar extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.all(4),
                 child: SvgPicture.asset(
-                  'assets/icons/iibsashologo.svg',
+                  'assets/icons/iibsasho Logo.svg',
                   height: 32,
                   width: 32,
                   color: AppColor.primary, // Set icon color for visibility

@@ -16,13 +16,14 @@ class PageSwitcher extends StatefulWidget {
 
 class _PageSwitcherState extends State<PageSwitcher> {
   int _selectedIndex = 4; // Start with Home page (index 4 after removing search tab)
+  final GlobalKey<HomePageState> _homeKey = GlobalKey<HomePageState>();
 
   final List<Widget> _pages = [
     const ChatsPage(),                        // 0
     const NotificationPage(),                 // 1
     const CreateListingPage(listing: null),   // 2
-    const FavoritesPage(),                    // 3
-    HomePage(key: HomePage.globalKey),        // 4 home
+  const FavoritesPage(),                    // 3
+  HomePage(key: _homeKey),                  // 4 home
   ];
 
   void _onItemTapped(int index) {
@@ -47,14 +48,12 @@ class _PageSwitcherState extends State<PageSwitcher> {
   // Index 4 (Home) doesn't require authentication
 
   if (_selectedIndex == 4 && index == 4) {
-      // Already on Home and tapped Home again (rare because nav item pushes parent handler)
-      HomePage.globalKey.currentState?.refreshFromNav();
+      _homeKey.currentState?.refreshFromNav();
     }
 
   // If leaving Home, ensure drawer is closed
   if (_selectedIndex == 4 && index != 4) {
-      // Leaving Home: aggressively close drawer
-      HomePage.globalKey.currentState?.forceCloseDrawer();
+      _homeKey.currentState?.forceCloseDrawer();
     }
 
     setState(() {
@@ -64,8 +63,8 @@ class _PageSwitcherState extends State<PageSwitcher> {
       // Whenever switching to Home (from another tab) refresh feed
       // Delay a frame to ensure state mounted after IndexedStack switch
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        await HomePage.globalKey.currentState?.forceCloseDrawer();
-        HomePage.globalKey.currentState?.refreshFromNav();
+        await _homeKey.currentState?.forceCloseDrawer();
+        _homeKey.currentState?.refreshFromNav();
       });
     }
   }

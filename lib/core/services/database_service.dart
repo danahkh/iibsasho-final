@@ -270,6 +270,13 @@ class DatabaseService {
         return response;
       } catch (e) {
         final msg = e.toString();
+        // Remove columns that might not exist (email, phone, description variants)
+        if (msg.contains("'email' column") || msg.contains('email') || msg.contains('PGRST204')) {
+          supportData.remove('email');
+        }
+        if (msg.contains("'phone' column") || msg.contains('phone')) {
+          supportData.remove('phone');
+        }
         if (msg.contains("description") && supportData.containsKey('description')) {
           // Remove or rename description if column doesn't exist
             final value = supportData.remove('description');
@@ -294,6 +301,25 @@ class DatabaseService {
                 return response3;
               } catch (_) {}
             }
+        } else {
+          // Generic fallback: strip unknown keys based on error text and retry once
+          final unknownCols = <String>[];
+          for (final k in List<String>.from(supportData.keys)) {
+            if (msg.contains("'$k' column")) unknownCols.add(k);
+          }
+          for (final k in unknownCols) {
+            supportData.remove(k);
+          }
+          if (unknownCols.isNotEmpty) {
+            try {
+              final response4 = await _client
+                  .from('support_requests')
+                  .insert(supportData)
+                  .select()
+                  .single();
+              return response4;
+            } catch (_) {}
+          }
         }
         rethrow;
       }

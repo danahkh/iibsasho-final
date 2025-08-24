@@ -14,9 +14,6 @@ import 'notification_page.dart';
 import 'search_page.dart';
 
 class HomePage extends StatefulWidget {
-  // Global key to allow external refresh triggers (e.g., tapping Home icon from other tabs/pages)
-  static final GlobalKey<HomePageState> globalKey = GlobalKey<HomePageState>();
-
   const HomePage({super.key});
   @override
   HomePageState createState() => HomePageState();
