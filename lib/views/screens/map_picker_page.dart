@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 class MapPickerPage extends StatefulWidget {
   final LatLng? initialLocation;
@@ -12,7 +13,6 @@ class MapPickerPage extends StatefulWidget {
 
 class _MapPickerPageState extends State<MapPickerPage> {
   LatLng? pickedLocation;
-  GoogleMapController? mapController;
 
   @override
   void initState() {
@@ -21,9 +21,7 @@ class _MapPickerPageState extends State<MapPickerPage> {
   }
 
   void _onMapTap(LatLng pos) {
-    setState(() {
-      pickedLocation = pos;
-    });
+    setState(() => pickedLocation = pos);
   }
 
   void _onConfirm() {
@@ -53,22 +51,32 @@ class _MapPickerPageState extends State<MapPickerPage> {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: pickedLocation!,
-              zoom: 14,
+          if (pickedLocation != null)
+            FlutterMap(
+              options: MapOptions(
+                initialCenter: pickedLocation!,
+                initialZoom: 14,
+                onTap: (tapPosition, point) => _onMapTap(point),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  subdomains: const ['a', 'b', 'c'],
+                  userAgentPackageName: 'com.iibsasho.app',
+                ),
+                if (pickedLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: pickedLocation!,
+                        width: 40,
+                        height: 40,
+                        child: const Icon(Icons.location_on, color: Colors.red, size: 36),
+                      ),
+                    ],
+                  ),
+              ],
             ),
-            onMapCreated: (controller) => mapController = controller,
-            onTap: _onMapTap,
-            markers: pickedLocation != null
-                ? {
-                    Marker(
-                      markerId: MarkerId('picked'),
-                      position: pickedLocation!,
-                    ),
-                  }
-                : {},
-          ),
           Positioned(
             bottom: 24,
             left: 24,

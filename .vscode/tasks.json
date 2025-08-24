@@ -1,0 +1,32 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Flutter pub get (Windows)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"pub",
+				"get"
+			],
+			"problemMatcher": [
+				"$dart"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Flutter run (Chrome)",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"run",
+				"-d",
+				"chrome"
+			],
+			"problemMatcher": [
+				"$dart"
+			],
+			"group": "build"
+		}
+	]
+}

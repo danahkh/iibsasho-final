@@ -5,8 +5,6 @@
 
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 
-// Firebase / Google plugins
-import 'package:google_maps_flutter_web/google_maps_flutter_web.dart';
 
 // Other plugins
 import 'package:url_launcher_web/url_launcher_web.dart';
@@ -19,7 +17,6 @@ import 'package:app_links_web/app_links_web.dart';
 
 void registerPlugins([final Registrar? registrar]) {
   final Registrar r = registrar ?? webPluginRegistrar;
-  GoogleMapsFlutterWeb.registerWith(r);
   UrlLauncherPlugin.registerWith(r);
   SharedPreferencesPlugin.registerWith(r);
   ImagePickerPlugin.registerWith(r);
