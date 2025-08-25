@@ -1,3 +1,4 @@
+import 'dart:convert';
 class Chat {
   final String id;
   final String listingId;
@@ -26,6 +27,13 @@ class Chat {
   });
 
   factory Chat.fromMap(Map<String, dynamic> map) {
+    // unread_count may be an int, string, or json (per-user map). Default to 0.
+    int _parseUnread(dynamic v) {
+      if (v is int) return v;
+      if (v is String) return int.tryParse(v) ?? 0;
+      if (v is Map) return 0; // per-user map not resolvable here
+      return 0;
+    }
     return Chat(
       id: map['id'] ?? '',
       listingId: map['listing_id'] ?? '',
@@ -34,7 +42,7 @@ class Chat {
       listingTitle: map['listing_title'] ?? '',
       lastMessage: map['last_message'] ?? '',
       lastMessageTime: DateTime.parse(map['last_message_time'] ?? DateTime.now().toIso8601String()),
-      unreadCount: map['unread_count'] ?? 0,
+      unreadCount: _parseUnread(map['unread_count']),
       otherUserName: map['other_user_name'] ?? '',
       otherUserAvatar: map['other_user_avatar'],
       createdAt: DateTime.parse(map['created_at'] ?? DateTime.now().toIso8601String()),
@@ -65,6 +73,8 @@ class Message {
   final String message;
   final DateTime timestamp;
   final bool isRead;
+  final String? type; // e.g., 'text', 'listing_ref'
+  final Map<String, dynamic>? metadata; // optional payload for rich messages
 
   Message({
     required this.id,
@@ -73,9 +83,22 @@ class Message {
     required this.message,
     required this.timestamp,
     required this.isRead,
+  this.type,
+  this.metadata,
   });
 
   factory Message.fromMap(Map<String, dynamic> map) {
+    // Pass through optional type/metadata when present; otherwise, null
+    final dynamicMeta = map['metadata'];
+    Map<String, dynamic>? metaMap;
+    if (dynamicMeta is Map) {
+      metaMap = Map<String, dynamic>.from(dynamicMeta);
+    } else if (dynamicMeta is String && dynamicMeta.trim().isNotEmpty) {
+      // If metadata stored as JSON string
+      try {
+        metaMap = Map<String, dynamic>.from(jsonDecode(dynamicMeta));
+      } catch (_) {}
+    }
     return Message(
       id: map['id'] ?? '',
       chatId: map['chat_id'] ?? '',
@@ -83,6 +106,8 @@ class Message {
       message: map['message'] ?? '',
       timestamp: DateTime.parse(map['timestamp'] ?? DateTime.now().toIso8601String()),
       isRead: map['is_read'] ?? false,
+      type: map['type'],
+      metadata: metaMap,
     );
   }
 
@@ -94,6 +119,8 @@ class Message {
       'message': message,
       'timestamp': timestamp.toIso8601String(),
       'is_read': isRead,
+  if (type != null) 'type': type,
+  if (metadata != null) 'metadata': metadata,
     };
   }
 }

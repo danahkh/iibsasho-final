@@ -14,53 +14,55 @@ class ChatService {
       final user = _supabase.auth.currentUser;
       if (user == null) throw 'User not authenticated';
 
-  // Create a consistent chat ID based on participants and listing (TEXT id)
-  final participants = [user.id, otherUserId]..sort();
-  final chatId = '${participants[0]}_${participants[1]}_$listingId';
+      // Preferred path: tuple-based chat (UUID id)
+      try {
+        final existing = await _supabase
+            .from('chats')
+            .select('id')
+            .eq('listing_id', listingId)
+            .eq('seller_id', otherUserId)
+            .eq('buyer_id', user.id)
+            .maybeSingle();
+        if (existing != null && (existing['id']?.toString().isNotEmpty ?? false)) {
+          return existing['id'].toString();
+        }
 
-      final chatResponse = await _supabase
-          .from('chats')
-          .select()
-          .eq('id', chatId)
-          .maybeSingle();
-      
-      if (chatResponse == null) {
-        // Create new chat
-        final payload = {
-          'id': chatId,
-          'participants': participants,
-          'listing_id': listingId,
-          'listing_title': listingTitle,
-          'created_at': DateTime.now().toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
-          'last_message': '',
-          // Some databases may not have last_message_time/last_message_sender_id
-          // We keep updated_at for ordering, and set optional fields only when present
-          'last_message_sender_id': '',
-          'is_active': true,
-          'unread_count': {
-            user.id: 0,
-            otherUserId: 0,
-          }
-        };
+        final inserted = await _supabase
+            .from('chats')
+            .insert({
+              'listing_id': listingId,
+              'seller_id': otherUserId,
+              'buyer_id': user.id,
+              'listing_title': listingTitle,
+              'last_message': '',
+              'created_at': DateTime.now().toIso8601String(),
+            })
+            .select('id')
+            .single();
+        return inserted['id'].toString();
+      } catch (e) {
+        // Fallback: participant-based chat (no forced id)
         try {
-          await _supabase.from('chats').insert(payload);
-        } catch (e) {
-          // If the table expects UUID id, fallback to generating one and store composite in a separate column if exists
-          try {
-            final uuid = _supabase.rpc('gen_random_uuid');
-            await _supabase.from('chats').insert({
-              ...payload,
-              'id': uuid,
-              'composite_id': chatId,
-            });
-          } catch (_) {
-            rethrow;
-          }
+          final participants = [user.id, otherUserId]..sort();
+          final inserted = await _supabase
+              .from('chats')
+              .insert({
+                'participants': participants,
+                'listing_id': listingId,
+                'listing_title': listingTitle,
+                'created_at': DateTime.now().toIso8601String(),
+                'updated_at': DateTime.now().toIso8601String(),
+                'last_message': '',
+                'is_active': true,
+              })
+              .select('id')
+              .single();
+          return inserted['id'].toString();
+        } catch (e2) {
+          AppLogger.e('Error creating chat (both tuple and participants failed)', e2);
+          return null;
         }
       }
-
-      return chatId;
     } catch (e) {
       AppLogger.e('Error creating/getting chat', e);
       return null;
@@ -227,13 +229,27 @@ class ChatService {
       final user = _supabase.auth.currentUser;
       if (user == null) throw 'User not authenticated';
 
-      // Mark messages as read directly
-      await _supabase
-          .from('messages')
-          .update({'is_read': true})
-          .eq('chat_id', chatId)
-          .neq('sender_id', user.id)
-          .eq('is_read', false);
+      // Mark messages as read (try new table first, then legacy)
+      bool updated = false;
+      try {
+        await _supabase
+            .from('chat_messages')
+            .update({'is_read': true})
+            .eq('chat_id', chatId)
+            .neq('sender_id', user.id);
+        updated = true;
+      } catch (_) {
+        try {
+          await _supabase
+              .from('messages')
+              .update({'is_read': true})
+              .eq('chat_id', chatId)
+              .neq('sender_id', user.id);
+          updated = true;
+        } catch (e2) {
+          AppLogger.e('Enhanced markMessagesAsRead dual-table update failed', e2);
+        }
+      }
 
       // Get current chat data to update unread count
       final chatResponse = await _supabase
@@ -251,7 +267,7 @@ class ChatService {
           .update({'unread_count': unreadCount})
           .eq('id', chatId);
 
-      return true;
+  return updated;
     } catch (e) {
       AppLogger.e('Error marking messages as read', e);
       return false;

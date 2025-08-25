@@ -17,14 +17,10 @@ class PageSwitcher extends StatefulWidget {
 class _PageSwitcherState extends State<PageSwitcher> {
   int _selectedIndex = 4; // Start with Home page (index 4 after removing search tab)
   final GlobalKey<HomePageState> _homeKey = GlobalKey<HomePageState>();
-
-  final List<Widget> _pages = [
-    const ChatsPage(),                        // 0
-    const NotificationPage(),                 // 1
-    const CreateListingPage(listing: null),   // 2
-  const FavoritesPage(),                    // 3
-  HomePage(key: _homeKey),                  // 4 home
-  ];
+  @override
+  void initState() {
+    super.initState();
+  }
 
   void _onItemTapped(int index) {
     // Handle authentication requirements for protected pages
@@ -71,6 +67,13 @@ class _PageSwitcherState extends State<PageSwitcher> {
 
   @override
   Widget build(BuildContext context) {
+    final pages = [
+      const ChatsPage(),                        // 0
+      const NotificationPage(),                 // 1
+      const CreateListingPage(listing: null),   // 2
+      const FavoritesPage(),                    // 3
+      HomePage(key: _homeKey),                  // 4
+    ];
     return WillPopScope(
       onWillPop: () async {
         // If not on Home tab, switch to Home instead of popping the route
@@ -85,7 +88,7 @@ class _PageSwitcherState extends State<PageSwitcher> {
       child: Scaffold(
         body: IndexedStack(
           index: _selectedIndex,
-          children: _pages,
+          children: pages,
         ),
         bottomNavigationBar: CustomBottomNavigationBar(
           currentIndex: _selectedIndex,

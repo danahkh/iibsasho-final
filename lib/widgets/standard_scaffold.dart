@@ -14,6 +14,7 @@ class StandardScaffold extends StatelessWidget {
   final bool showBack;
   final Color? backgroundColor;
   final Widget? floatingActionButton;
+  final bool showBottomNav;
 
   const StandardScaffold({
     super.key,
@@ -26,6 +27,7 @@ class StandardScaffold extends StatelessWidget {
     this.showBack = true,
     this.backgroundColor,
     this.floatingActionButton,
+  this.showBottomNav = true,
   });
 
   @override
@@ -41,17 +43,19 @@ class StandardScaffold extends StatelessWidget {
         bottom: bottom,
       ),
       body: body,
-      bottomNavigationBar: CustomBottomNavigationBar(
-        currentIndex: currentIndex,
-        onTap: (i){
-          if (onTabChange != null) {
-            onTabChange!(i);
-          } else {
-            // Default: pop until root then maybe switch
-            Navigator.of(context).popUntil((r) => r.isFirst);
-          }
-        },
-      ),
+      bottomNavigationBar: showBottomNav
+          ? CustomBottomNavigationBar(
+              currentIndex: currentIndex,
+              onTap: (i){
+                if (onTabChange != null) {
+                  onTabChange!(i);
+                } else {
+                  // Default: pop until root then maybe switch
+                  Navigator.of(context).popUntil((r) => r.isFirst);
+                }
+              },
+            )
+          : null,
       floatingActionButton: floatingActionButton,
     );
   }

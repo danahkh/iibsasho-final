@@ -536,6 +536,7 @@ class _CreateListingPageState extends State<CreateListingPage> {
     return StandardScaffold(
       title: widget.listing == null ? 'Create Listing' : 'Edit Listing',
       currentIndex: 2,
+      showBottomNav: false,
       actions: [
         Padding(
           padding: const EdgeInsets.only(right: 8.0),

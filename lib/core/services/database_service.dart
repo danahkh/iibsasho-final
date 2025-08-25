@@ -258,6 +258,11 @@ class DatabaseService {
       final user = currentUser;
       if (user != null) {
         supportData['user_id'] = user.id;
+        // Provide both keys to satisfy differing schemas
+        if (user.email != null && (user.email ?? '').isNotEmpty) {
+          supportData.putIfAbsent('user_email', () => user.email);
+          supportData.putIfAbsent('email', () => user.email);
+        }
       }
       supportData['created_at'] = DateTime.now().toIso8601String();
       supportData['updated_at'] = DateTime.now().toIso8601String();
@@ -270,9 +275,29 @@ class DatabaseService {
         return response;
       } catch (e) {
         final msg = e.toString();
+        // If backend requires user_email (NOT NULL), add it and retry once
+        if (msg.contains('user_email') || msg.contains('23502')) {
+          final u = currentUser;
+          final emailFromData = (supportData['email'] ?? '') as String?;
+          final fallbackEmail = u?.email ?? emailFromData ?? '';
+          if (fallbackEmail.isNotEmpty) {
+            supportData['user_email'] = fallbackEmail;
+            try {
+              final response0 = await _client
+                  .from('support_requests')
+                  .insert(supportData)
+                  .select()
+                  .single();
+              return response0;
+            } catch (_) {}
+          }
+        }
         // Remove columns that might not exist (email, phone, description variants)
         if (msg.contains("'email' column") || msg.contains('email') || msg.contains('PGRST204')) {
           supportData.remove('email');
+        }
+        if (msg.contains("'name' column") || msg.contains("name' column") || msg.contains("'name")) {
+          supportData.remove('name');
         }
         if (msg.contains("'phone' column") || msg.contains('phone')) {
           supportData.remove('phone');

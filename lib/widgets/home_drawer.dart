@@ -345,7 +345,8 @@ class _HomeDrawerState extends State<HomeDrawer> {
                   },
                 ),
                 ListTile(
-                  leading: Icon(Icons.chat, color: AppColor.iconPrimary),
+                  // Match bottom nav chat icon style
+                  leading: Icon(Icons.chat_bubble_outline, color: AppColor.iconPrimary),
                   title: Text('Chats', style: TextStyle(color: AppColor.textPrimary)),
                   onTap: () {
                     Navigator.of(context).push(MaterialPageRoute(builder: (context) => ChatsPage()));

@@ -2,9 +2,8 @@
 	"name": "iibsasho",
 	"version": "1.0.0",
 	"private": true,
-	"description": "Flutter web deployment for iibsasho on Vercel",
+	"description": "Flutter web deployment for iibsasho (Cloudflare Pages)",
 	"scripts": {
-		"vercel-build": "bash scripts/vercel_flutter_build.sh",
-		"build": "bash scripts/vercel_flutter_build.sh"
+		"build": "bash scripts/cloudflare_pages_build.sh"
 	}
 }

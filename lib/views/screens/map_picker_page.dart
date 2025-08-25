@@ -39,10 +39,10 @@ class _MapPickerPageState extends State<MapPickerPage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
-      Padding(
+          Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: SvgPicture.asset(
-        'assets/icons/iibsasho Logo.svg',
+              'assets/icons/iibsasho_colored.svg',
               height: 32,
               width: 32,
             ),

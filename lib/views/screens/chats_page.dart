@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
 import '../../constant/app_color.dart';
 import '../../core/utils/supabase_helper.dart';
-import '../../core/services/enhanced_chat_service.dart';
+import '../../core/services/chat_service.dart';
+import '../../core/model/chat.dart';
 import '../../core/utils/app_logger.dart';
 import '../../widgets/standard_scaffold.dart';
-import 'enhanced_chat_detail_page.dart';
+import 'chat_detail_page.dart';
 
 class ChatsPage extends StatefulWidget {
   const ChatsPage({super.key});
@@ -22,6 +22,7 @@ class _ChatsPageState extends State<ChatsPage> {
     return StandardScaffold(
       title: 'Chats',
       currentIndex: 0,
+      showBottomNav: false,
       actions: [
         if (currentUser != null)
           IconButton(
@@ -29,10 +30,10 @@ class _ChatsPageState extends State<ChatsPage> {
             onPressed: _showSearchDialog,
           ),
       ],
-      body: currentUser == null
-          ? _buildNotLoggedInView()
-          : StreamBuilder<List<Map<String, dynamic>>>(
-              stream: ChatService.getUserChats(),
+    body: currentUser == null
+      ? _buildNotLoggedInView()
+      : StreamBuilder<List<Chat>>(
+        stream: ChatService.getUserChats(currentUser.id),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return _buildLoadingView();
@@ -174,7 +175,7 @@ class _ChatsPageState extends State<ChatsPage> {
     );
   }
 
-  Widget _buildChatsView(List<Map<String, dynamic>> chats) {
+  Widget _buildChatsView(List<Chat> chats) {
     return RefreshIndicator(
       onRefresh: () async {
         // Implement refresh functionality
@@ -236,25 +237,8 @@ class _ChatsPageState extends State<ChatsPage> {
     );
   }
 
-  Widget _buildChatItem(Map<String, dynamic> chat) {
-    final currentUserId = SupabaseHelper.currentUser?.id ?? '';
-    
-    // Get unread count for current user
-    Map<String, dynamic> unreadCount = {};
-    final rawUnread = chat['unread_count'];
-    if (rawUnread is Map) {
-      unreadCount = Map<String, dynamic>.from(rawUnread);
-    } else if (rawUnread is String) {
-      // In case it's stored as JSON text
-      try {
-        unreadCount = Map<String, dynamic>.from(
-          (rawUnread.isNotEmpty) ? (jsonDecode(rawUnread) as Map) : {},
-        );
-      } catch (_) {}
-    }
-    final myUnreadCount = (unreadCount[currentUserId] ?? 0) is int
-        ? unreadCount[currentUserId]
-        : int.tryParse('${unreadCount[currentUserId] ?? 0}') ?? 0;
+  Widget _buildChatItem(Chat chat) {
+    final myUnreadCount = chat.unreadCount;
     
     return InkWell(
       onTap: () {
@@ -273,7 +257,9 @@ class _ChatsPageState extends State<ChatsPage> {
                   radius: 24,
                   backgroundColor: AppColor.primary.withOpacity(0.1),
                   child: Text(
-                    (chat['listing_title'] ?? 'C').substring(0, 1).toUpperCase(),
+          (chat.listingTitle.isNotEmpty ? chat.listingTitle : 'C')
+            .substring(0, 1)
+            .toUpperCase(),
                     style: TextStyle(
                       color: AppColor.primary,
                       fontWeight: FontWeight.bold,
@@ -315,7 +301,7 @@ class _ChatsPageState extends State<ChatsPage> {
                     children: [
                       Expanded(
                         child: Text(
-                          chat['listing_title'] ?? 'Chat',
+                          chat.listingTitle.isNotEmpty ? chat.listingTitle : 'Chat',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: myUnreadCount > 0 
@@ -326,7 +312,7 @@ class _ChatsPageState extends State<ChatsPage> {
                         ),
                       ),
                       Text(
-                        _formatTimestamp(_safeParseTime(chat)),
+                        _formatTimestamp(chat.lastMessageTime),
                         style: TextStyle(
                           fontSize: 12,
                           color: AppColor.textSecondary,
@@ -336,7 +322,7 @@ class _ChatsPageState extends State<ChatsPage> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    chat['last_message'] ?? 'No messages yet',
+                    chat.lastMessage.isNotEmpty ? chat.lastMessage : 'No messages yet',
                     style: TextStyle(
                       fontSize: 14,
                       color: myUnreadCount > 0 
@@ -366,50 +352,47 @@ class _ChatsPageState extends State<ChatsPage> {
 
   String _formatTimestamp(DateTime timestamp) {
     final now = DateTime.now();
-    final difference = now.difference(timestamp);
+    // Use absolute difference; if server time is slightly ahead, avoid negative values
+    Duration diff = now.difference(timestamp);
+    if (diff.isNegative) diff = Duration.zero;
 
-    if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h';
-    } else if (difference.inDays < 7) {
-      return '${difference.inDays}d';
-    } else {
-      return '${timestamp.day}/${timestamp.month}';
+    final minutes = diff.inMinutes;
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) {
+      return '$minutes minute${minutes == 1 ? '' : 's'} ago';
     }
+
+    final hours = diff.inHours;
+    if (hours < 24) {
+      return '$hours hour${hours == 1 ? '' : 's'} ago';
+    }
+
+    final days = diff.inDays;
+    if (days < 7) {
+      return '$days day${days == 1 ? '' : 's'} ago';
+    }
+
+    final weeks = (days / 7).floor();
+    if (weeks < 5) {
+      return '$weeks week${weeks == 1 ? '' : 's'} ago';
+    }
+
+    final months = (days / 30).floor();
+    if (months < 12) {
+      return '$months month${months == 1 ? '' : 's'} ago';
+    }
+
+    final years = (days / 365).floor();
+    return '$years year${years == 1 ? '' : 's'} ago';
   }
 
-  DateTime _safeParseTime(Map<String, dynamic> chat) {
-    final candidates = [
-      chat['last_message_time'],
-      chat['updated_at'],
-      chat['created_at'],
-    ];
-    for (final c in candidates) {
-      if (c is String && c.isNotEmpty) {
-        try {
-          return DateTime.parse(c);
-        } catch (_) {}
-      }
-    }
-    return DateTime.fromMillisecondsSinceEpoch(0);
-  }
-
-  void _openChat(Map<String, dynamic> chat) {
-    final chatId = (chat['id'] ?? '').toString();
-    final listingTitle = (chat['listing_title'] ?? 'Chat').toString();
-    final listingId = (chat['listing_id'] ?? '').toString();
-
-    if (chatId.isEmpty) return;
+  void _openChat(Chat chat) {
+    if (chat.id.isEmpty) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => EnhancedChatDetailPage(
-          chatId: chatId,
-          listingTitle: listingTitle,
-          listingId: listingId,
-        ),
+        builder: (_) => ChatDetailPage(chat: chat),
       ),
     );
   }

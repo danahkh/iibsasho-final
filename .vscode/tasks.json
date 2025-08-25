@@ -27,6 +27,34 @@
 				"$dart"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Flutter run (Chrome) - retry",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"run",
+				"-d",
+				"chrome"
+			],
+			"problemMatcher": [
+				"$dart"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Flutter run (Chrome) - retry 2",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"run",
+				"-d",
+				"chrome"
+			],
+			"problemMatcher": [
+				"$dart"
+			],
+			"group": "build"
 		}
 	]
 }

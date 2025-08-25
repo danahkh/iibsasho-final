@@ -121,7 +121,17 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   : null,
               child: widget.chat.otherUserAvatar == null
                   ? Text(
-                      widget.chat.otherUserName.substring(0, 1).toUpperCase(),
+                      (() {
+                        final name = widget.chat.otherUserName;
+                        final seed = (name.isNotEmpty
+                                ? name
+                                : (widget.chat.listingTitle.isNotEmpty
+                                    ? widget.chat.listingTitle
+                                    : 'C'))
+                            .trim();
+                        if (seed.isEmpty) return 'C';
+                        return seed.substring(0, 1).toUpperCase();
+                      })(),
                       style: TextStyle(
                         color: AppColor.textLight,
                         fontWeight: FontWeight.bold,
@@ -136,7 +146,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.chat.otherUserName,
+                    widget.chat.otherUserName.isNotEmpty
+                        ? widget.chat.otherUserName
+                        : 'Chat',
                     style: TextStyle(
                       color: AppColor.textLight,
                       fontSize: 16,
@@ -204,9 +216,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                           final showTimestamp = index == 0 || 
                               _shouldShowTimestamp(messages[index - 1], message);
                           
+                          final isFirst = index == 0;
+                          final isListingRef = (message.type == 'listing_ref') && (message.metadata != null);
                           return Column(
                             children: [
                               if (showTimestamp) _buildTimestamp(message.timestamp),
+                              if (isFirst && isListingRef)
+                                _buildListingReferenceCard(message.metadata!),
                               _buildMessageBubble(message, isCurrentUser),
                             ],
                           );
@@ -439,6 +455,59 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 height: 1.4,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListingReferenceCard(Map<String, dynamic> meta) {
+    final listingId = meta['listingId']?.toString() ?? '';
+    final title = meta['title']?.toString() ?? 'Listing';
+    final imageUrl = meta['image']?.toString();
+    return Container(
+      margin: EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColor.cardBackground,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColor.divider),
+      ),
+      child: Row(
+        children: [
+          if (imageUrl != null && imageUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(imageUrl, width: 56, height: 56, fit: BoxFit.cover),
+            )
+          else
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: AppColor.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.shopping_bag, color: AppColor.primary),
+            ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Listing reference', style: TextStyle(color: AppColor.textSecondary, fontSize: 12)),
+                SizedBox(height: 4),
+                Text(title, style: TextStyle(color: AppColor.textPrimary, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              if (listingId.isNotEmpty) {
+                Navigator.pushNamed(context, '/listing/$listingId');
+              }
+            },
+            child: Text('View', style: TextStyle(color: AppColor.primary)),
           ),
         ],
       ),

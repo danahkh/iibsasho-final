@@ -20,6 +20,7 @@ class _NotificationPageState extends State<NotificationPage> {
     return StandardScaffold(
       title: 'Notifications',
       currentIndex: 1,
+      showBottomNav: false,
       actions: [
         if (currentUser != null)
           StreamBuilder<List<NotificationItem>>(

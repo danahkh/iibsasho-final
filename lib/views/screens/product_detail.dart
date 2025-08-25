@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/utils/app_logger.dart';
 import 'package:iibsasho/core/model/listing.dart';
 import 'package:iibsasho/core/model/user.dart';
 import 'package:iibsasho/core/model/comment.dart';
 import 'package:iibsasho/core/services/favorite_service.dart';
 import 'package:iibsasho/core/services/comment_service.dart';
-import 'package:iibsasho/core/services/enhanced_chat_service.dart';
+import 'package:iibsasho/core/services/chat_service.dart' as TupleChat;
 import 'package:iibsasho/core/services/listing_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:iibsasho/widgets/standard_scaffold.dart';
+import 'package:iibsasho/views/screens/chat_detail_page.dart';
 import '../../constant/app_color.dart';
 import '../../core/utils/supabase_helper.dart';
 import '../../widgets/expandable_description.dart';
@@ -524,25 +526,41 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
     }
 
     try {
-      final chatId = await SupabaseHelper.guardNetwork<String?>(
-        context,
-        () => ChatService.createOrGetChat(
-          otherUserId: widget.listing.userId,
-          listingId: widget.listing.id,
-          listingTitle: widget.listing.title,
-        ),
-        actionName: 'start chat',
+      final me = SupabaseHelper.currentUser!;
+      // Primary path: use tuple columns to create or get chat
+      final chat = await TupleChat.ChatService.createChat(
+        listingId: widget.listing.id,
+        sellerId: widget.listing.userId,
+        buyerId: me.id,
+        listingTitle: widget.listing.title,
       );
-      if (chatId == null) return; // offline or failed handled
-      _showSuccessDialog(
-        'Chat Ready!',
-        'Your chat with the seller has been created. You can now view it in your chats page.',
-      );
+      if (chat != null) {
+        // Send a first message that includes a listing reference card
+        final initial = 'Hi, I’m interested in: ${widget.listing.title}';
+        await TupleChat.ChatService.sendMessage(
+          chatId: chat.id,
+          senderId: me.id,
+          message: initial,
+          type: 'listing_ref',
+          metadata: {
+            'listingId': widget.listing.id,
+            'title': widget.listing.title,
+            if (widget.listing.images.isNotEmpty) 'image': widget.listing.images.first,
+          },
+        );
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatDetailPage(chat: chat),
+          ),
+        );
+        return;
+      }
+  // No fallback to composite-id path to avoid UUID errors
+
+      _showErrorDialog('Chat Error', 'Unable to start chat with seller. Please try again.');
     } catch (e) {
-      _showErrorDialog(
-        'Chat Error',
-        'Unable to start chat with seller. Please try again. $e',
-      );
+      _showErrorDialog('Chat Error', 'Unable to start chat with seller. Please try again. $e');
     }
   }
 
@@ -1117,6 +1135,13 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                     Icon(Icons.location_on, color: Colors.red, size: 20),
                     SizedBox(width: 4),
                     Expanded(child: Text(widget.listing.location, style: TextStyle(color: Colors.black54))),
+                    SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: _openDirections,
+                      icon: Icon(Icons.directions, size: 18, color: AppColor.primary),
+                      label: Text('Get directions', style: TextStyle(color: AppColor.primary)),
+                      style: TextButton.styleFrom(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 0)),
+                    ),
                   ],
                 ),
                 SizedBox(height: 24),
@@ -1477,6 +1502,39 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _openDirections() async {
+    final lat = widget.listing.latitude;
+    final lng = widget.listing.longitude;
+    // Fallback to search by location name if coordinates missing
+    final hasCoords = lat != 0 && lng != 0;
+    final encodedName = Uri.encodeComponent(widget.listing.location.isNotEmpty ? widget.listing.location : widget.listing.title);
+
+    // Prefer Google Maps on all platforms; fall back to geo: deep link then Apple Maps as last resort
+    final googleUri = hasCoords
+        ? Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng')
+        : Uri.parse('https://www.google.com/maps/search/?api=1&query=$encodedName');
+
+    final candidates = <Uri>[
+      googleUri,
+      if (hasCoords) Uri.parse('geo:$lat,$lng?q=$lat,$lng(${Uri.encodeComponent(widget.listing.title)})'),
+      if (hasCoords) Uri.parse('https://maps.apple.com/?daddr=$lat,$lng'),
+    ];
+
+    for (final uri in candidates) {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+        return;
+      }
+    }
+
+    // As a last resort, show an error
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open maps on this device.')),
+      );
+    }
   }
 
   String _formatTimestamp(DateTime timestamp) {
