@@ -9,7 +9,7 @@ if [ -d build/web ]; then
 fi
 
 FLUTTER_CHANNEL="stable"
-# Use a Flutter version that includes Dart >= 3.8.1
+# Use a Flutter version that includes Dart >= 3.8.1 (matches pubspec environment)
 FLUTTER_VERSION="3.35.1"
 
 echo "Downloading Flutter $FLUTTER_VERSION ($FLUTTER_CHANNEL)";
@@ -20,6 +20,9 @@ tar -xf flutter.tar.xz -C .flutter-sdk || (echo "tar extraction failed" && exit 
 export PATH="$PWD/.flutter-sdk/flutter/bin:$PATH"
 # Silence git 'dubious ownership' warning inside Flutter SDK
 git config --global --add safe.directory "$PWD/.flutter-sdk/flutter" || true
+
+# Ensure pub cache is writable in the Vercel environment
+export PUB_CACHE="$PWD/.pub-cache"
 
 flutter config --enable-web --no-analytics --no-cli-animations
 flutter --version
