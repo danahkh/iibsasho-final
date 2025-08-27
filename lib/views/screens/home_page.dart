@@ -319,7 +319,18 @@ class HomePageState extends State<HomePage> {
                     child: AspectRatio(
                       aspectRatio: 4/3,
                       child: l.images.isNotEmpty
-                          ? Image.network(l.images.first, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: Icon(Icons.image_not_supported)))
+                          ? Image.network(
+                              _resolveImageUrl(l.images.first),
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              loadingBuilder: (context, child, loadingProgress) {
+                                if (loadingProgress == null) return child;
+                                return Center(
+                                  child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                                );
+                              },
+                              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade200, child: Icon(Icons.image_not_supported)),
+                            )
                           : Container(color: Colors.grey.shade100, child: Icon(Icons.photo, color: Colors.grey)),
                     ),
                   ),
@@ -343,6 +354,26 @@ class HomePageState extends State<HomePage> {
         },
       ),
     );
+  }
+
+  String _resolveImageUrl(String raw) {
+    final url = raw.trim();
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    try {
+      final path = url.startsWith('/') ? url.substring(1) : url;
+      if (path.startsWith('storage/v1/object/public/')) {
+        final rest = path.replaceFirst('storage/v1/object/public/', '');
+        final firstSlash = rest.indexOf('/');
+        if (firstSlash > 0) {
+          final bucket = rest.substring(0, firstSlash);
+          final objectPath = rest.substring(firstSlash + 1);
+          return SupabaseHelper.client.storage.from(bucket).getPublicUrl(objectPath);
+        }
+      }
+      return SupabaseHelper.client.storage.from('listings').getPublicUrl(path);
+    } catch (_) {
+      return raw;
+    }
   }
 
   // Ensure promoted listings appear first, then featured, then newest
@@ -946,116 +977,153 @@ class HomePageState extends State<HomePage> {
   }
 
   Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 64, color: AppColor.error),
-          SizedBox(height: 16),
-          Text(
-            'Something went wrong',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AppColor.textDark,
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: AppColor.error),
+                SizedBox(height: 16),
+                Text(
+                  'Something went wrong',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: AppColor.textDark,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Please try again later',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColor.textSecondary,
+                  ),
+                ),
+                SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _loadAllListings,
+                  child: Text('Retry'),
+                ),
+              ],
             ),
           ),
-          SizedBox(height: 8),
-          Text(
-            'Please try again later',
-            style: TextStyle(
-              fontSize: 14,
-              color: AppColor.textSecondary,
-            ),
-          ),
-          SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: _loadAllListings,
-            child: Text('Retry'),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.inventory_2_outlined, size: 64, color: AppColor.textSecondary),
-          SizedBox(height: 16),
-          Text(
-            'No listings found',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: AppColor.textDark,
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inventory_2_outlined, size: 64, color: AppColor.textSecondary),
+                SizedBox(height: 16),
+                Text(
+                  'No listings found',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: AppColor.textDark,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  selectedCategory != null 
+                    ? 'No ${selectedCategory!.name.toLowerCase()} listings available'
+                    : 'Be the first to add a listing!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColor.textSecondary,
+                  ),
+                ),
+                SizedBox(height: 24),
+                if (selectedCategory != null)
+                  ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        selectedCategory = null;
+                        selectedSubcategory = null;
+                        showSubcategories = false;
+                      });
+                      _loadAllListings();
+                    },
+                    child: Text('Clear Filters'),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: _loadAllListings,
+                    child: Text('Refresh'),
+                  ),
+              ],
             ),
           ),
-          SizedBox(height: 8),
-          Text(
-            selectedCategory != null 
-              ? 'No ${selectedCategory!.name.toLowerCase()} listings available'
-              : 'Be the first to add a listing!',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: AppColor.textSecondary,
-            ),
-          ),
-          SizedBox(height: 24),
-          if (selectedCategory != null)
-            ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  selectedCategory = null;
-                  selectedSubcategory = null;
-                  showSubcategories = false;
-                });
-                _loadAllListings();
-              },
-              child: Text('Clear Filters'),
-            )
-          else
-            ElevatedButton(
-              onPressed: _loadAllListings,
-              child: Text('Refresh'),
-            ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildListingsGrid() {
     if (_isGridView) {
-      return GridView.builder(
-        controller: _scrollController,
-        padding: EdgeInsets.all(16),
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 1.8, // Made smaller
-          crossAxisSpacing: 6, // Reduced spacing
-          mainAxisSpacing: 6, // Reduced spacing
-        ),
-        itemCount: _displayedListings.length + (_isLoadingMore ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= _displayedListings.length) {
-            return Container(
-              alignment: Alignment.center,
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(AppColor.primary),
-              ),
-            );
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          // Choose a max tile width that scales with screen size
+          double maxExtent;
+          if (width < 480) {
+            maxExtent = 200; // phones
+          } else if (width < 760) {
+            maxExtent = 240; // small tablets / narrow windows
+          } else if (width < 1100) {
+            maxExtent = 280; // tablets / typical laptop half screen
+          } else {
+            maxExtent = 320; // wide screens
           }
+          // Slightly taller than wide to accommodate text; avoids overflow bands
+          final aspect = 3 / 4; // width : height = 3 : 4
 
-          final listing = _displayedListings[index];
-          return _buildImprovedGridItem(listing);
+          return GridView.builder(
+            controller: _scrollController,
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: maxExtent,
+              childAspectRatio: aspect,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+            ),
+            itemCount: _displayedListings.length + (_isLoadingMore ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index >= _displayedListings.length) {
+                return Container(
+                  alignment: Alignment.center,
+                  child: CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColor.primary),
+                  ),
+                );
+              }
+
+              final listing = _displayedListings[index];
+              return _buildImprovedGridItem(listing);
+            },
+          );
         },
       );
     } else {
       return ListView.builder(
         controller: _scrollController,
+  physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.all(16),
         itemCount: _displayedListings.length + (_isLoadingMore ? 1 : 0),
         itemBuilder: (context, index) {

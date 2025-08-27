@@ -4,6 +4,11 @@ import '../../core/utils/supabase_helper.dart';
 import '../../core/services/notification_service.dart';
 import '../../core/model/notification_item.dart';
 import '../../widgets/standard_scaffold.dart';
+import '../../core/services/chat_service.dart';
+import 'chat_detail_page.dart';
+import '../../core/services/listing_service.dart';
+import 'product_detail.dart';
+import 'login_page.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -13,6 +18,7 @@ class NotificationPage extends StatefulWidget {
 }
 
 class _NotificationPageState extends State<NotificationPage> {
+  String _filter = 'all'; // all | chats | listings | general
   @override
   Widget build(BuildContext context) {
     final currentUser = SupabaseHelper.currentUser;
@@ -44,7 +50,7 @@ class _NotificationPageState extends State<NotificationPage> {
       ],
       body: currentUser == null
           ? _buildNotLoggedInView()
-          : StreamBuilder<List<NotificationItem>>(
+              : StreamBuilder<List<NotificationItem>>(
               stream: NotificationService.getUserNotifications(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -55,7 +61,7 @@ class _NotificationPageState extends State<NotificationPage> {
                   return _buildErrorView(snapshot.error.toString());
                 }
                 
-                final notifications = snapshot.data ?? [];
+                final notifications = _applyFilter(snapshot.data ?? []);
                 
                 if (notifications.isEmpty) {
                   return _buildEmptyView();
@@ -65,6 +71,31 @@ class _NotificationPageState extends State<NotificationPage> {
               },
       ),
     );
+  }
+
+  List<NotificationItem> _applyFilter(List<NotificationItem> items) {
+    switch (_filter) {
+      case 'chats':
+        // Chats are message type with related_type = 'chat'
+        return items.where((n) => n.type == 'message' && (n.relatedType == 'chat')).toList();
+      case 'listings':
+        // Listings cover comments and favorites, or anything linked to a listing/comment
+        return items.where((n) =>
+          n.type == 'comment' ||
+          n.type == 'favorite' ||
+          n.relatedType == 'listing' ||
+          n.relatedType == 'comment'
+        ).toList();
+      case 'general':
+        // Admin broadcast and other general alerts
+        return items.where((n) =>
+          n.relatedType == 'admin' ||
+          (n.metadata != null && (n.metadata!['scope'] == 'admin_broadcast'))
+        ).toList();
+      case 'all':
+      default:
+        return items;
+    }
   }
 
   Widget _buildLoadingView() {
@@ -131,7 +162,13 @@ class _NotificationPageState extends State<NotificationPage> {
           ),
           SizedBox(height: 24),
           ElevatedButton(
-            onPressed: () => Navigator.pushReplacementNamed(context, '/login'),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => LoginPage(),
+                ),
+              );
+            },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColor.primary,
               foregroundColor: AppColor.textLight,
@@ -153,6 +190,22 @@ class _NotificationPageState extends State<NotificationPage> {
       color: AppColor.primary,
       child: Column(
         children: [
+          // Filter chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                _filterChip('All', 'all'),
+                SizedBox(width: 8),
+                _filterChip('Chats', 'chats'),
+                SizedBox(width: 8),
+                _filterChip('Listings', 'listings'),
+                SizedBox(width: 8),
+                _filterChip('General', 'general'),
+              ],
+            ),
+          ),
           // Notifications header
           Container(
             padding: EdgeInsets.all(16),
@@ -160,7 +213,7 @@ class _NotificationPageState extends State<NotificationPage> {
             child: Row(
               children: [
                 Text(
-                  'Recent',
+                  _filter[0].toUpperCase() + _filter.substring(1),
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -204,6 +257,22 @@ class _NotificationPageState extends State<NotificationPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _filterChip(String label, String key) {
+    final selected = _filter == key;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _filter = key),
+      selectedColor: AppColor.primary.withOpacity(0.15),
+      labelStyle: TextStyle(
+        color: selected ? AppColor.primary : AppColor.textPrimary,
+        fontWeight: FontWeight.w600,
+      ),
+      backgroundColor: AppColor.cardBackground,
+      shape: StadiumBorder(side: BorderSide(color: selected ? AppColor.primary : AppColor.divider)),
     );
   }
 
@@ -404,28 +473,117 @@ class _NotificationPageState extends State<NotificationPage> {
     if (!notification.isRead) {
       await NotificationService.markAsRead(notification.id);
     }
-    
-    // Handle navigation based on notification type
-    switch (notification.type) {
-      case 'message':
-        // Navigate to chats
-        Navigator.pushNamed(context, '/chats');
-        break;
-      case 'comment':
-        // Navigate to the specific listing
-        if (notification.relatedId != null) {
-          _navigateToListing(notification.relatedId!);
-        }
-        break;
-      case 'favorite':
-        // Navigate to the specific listing
-        if (notification.relatedId != null) {
-          _navigateToListing(notification.relatedId!);
-        }
-        break;
-      default:
-        break;
-    }
+
+    // Show a modern dialog with details and actions
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: AppColor.cardBackground,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Title bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColor.primary,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.notifications_active, color: Colors.white),
+                    const SizedBox(width: 8),
+                    const Text('Iibsasho', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    )
+                  ],
+                ),
+              ),
+              // Content
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(notification.title, style: TextStyle(color: AppColor.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    Text(notification.message, style: TextStyle(color: AppColor.textSecondary, fontSize: 14)),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              // Actions
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close'),
+                    ),
+                    const Spacer(),
+                    if (notification.type == 'message')
+                      FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          final currentUser = SupabaseHelper.currentUser;
+                          final chatId = notification.relatedId;
+                          if (currentUser != null && chatId != null) {
+                            final chat = await ChatService.getChatById(chatId, currentUser.id);
+                            if (chat != null && context.mounted) {
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatDetailPage(chat: chat)));
+                            } else {
+                              // Fallback to chats list
+                              if (context.mounted) Navigator.pushNamed(context, '/chats');
+                            }
+                          } else {
+                            if (context.mounted) Navigator.pushNamed(context, '/chats');
+                          }
+                        },
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: const Text('Open Chat'),
+                      ),
+                    if (notification.type == 'comment' || notification.type == 'favorite' || notification.relatedType == 'listing')
+                      FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          final listingId = notification.relatedId ?? notification.metadata?['listing_id'];
+                          if (listingId != null) {
+                            final listing = await ListingService.getListingById(listingId);
+                            if (listing != null && context.mounted) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ListingDetailPage(listing: listing),
+                                ),
+                              );
+                            } else {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Listing not found')),
+                                );
+                              }
+                            }
+                          }
+                        },
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('View Listing'),
+                      ),
+                  ],
+                ),
+              )
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _handleMenuAction(String action, NotificationItem notification) async {
@@ -488,15 +646,6 @@ class _NotificationPageState extends State<NotificationPage> {
           ),
         ],
       ),
-    );
-  }
-
-  void _navigateToListing(String listingId) {
-    // TODO: Navigate to listing detail page with the given listingId
-    // This would need to be implemented based on your app's routing structure
-    // For now, show a placeholder
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Navigate to listing: $listingId')),
     );
   }
 

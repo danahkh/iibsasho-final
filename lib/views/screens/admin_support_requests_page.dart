@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../../constant/app_color.dart';
 import '../../core/services/admin_access_service.dart';
-import '../../core/utils/app_logger.dart';
+import '../../core/services/database_service.dart';
+import '../../core/model/support_request.dart';
+import '../../core/model/support_message.dart';
+import '../../core/notifiers/support_counts_notifier.dart';
 
 class AdminSupportRequestsPage extends StatefulWidget {
   const AdminSupportRequestsPage({super.key});
@@ -13,11 +17,25 @@ class AdminSupportRequestsPage extends StatefulWidget {
 class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
   String _selectedFilter = 'all';
   bool _isAdmin = false;
+  final int _openCount = 0; // local fallback only
+  final int _resolvedCount = 0; // local fallback only
+  static const int _pageSize = 25;
+  int _currentPage = 0;
+  bool _isLoadingMore = false;
+  final List<SupportRequest> _pagedItems = [];
+  Stream<List<SupportRequest>>? _stream;
+  late final ScrollController _scrollController;
+  Timer? _countsTimer; // deprecated by SupportCountsNotifier; kept as safety
 
   @override
   void initState() {
     super.initState();
-    _checkAdminAccess();
+  _checkAdminAccess();
+  _scrollController = ScrollController()..addListener(_onScroll);
+  _attachStream();
+  _startCountsPolling();
+  // Initial page
+  WidgetsBinding.instance.addPostFrameCallback((_) => _loadNextPage());
   }
 
   Future<void> _checkAdminAccess() async {
@@ -37,15 +55,67 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
     });
   }
 
-  Future<List<Map<String, dynamic>>> _fetchSupportRequests() async {
-    try {
-      // Return empty list for now - implement based on your DatabaseService
-      return [];
-    } catch (e) {
-      AppLogger.e('Error fetching support requests', e);
-      return [];
+  void _startCountsPolling() {
+    // No-op: counts are now handled by SupportCountsNotifier app-wide.
+    _countsTimer?.cancel();
+  }
+
+  void _attachStream() {
+    // Build server-side filtered stream
+  var base = DatabaseService
+        .getSupportRequestsTyped()
+        .asStream()
+        .asyncExpand((initial) => DatabaseService.client
+          .from('support_requests')
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .map((rows) => rows.map(SupportRequest.fromJson).toList())
+        );
+  // Note: Stream builder doesn't support or() reliably; keep base stream unfiltered
+  _stream = base;
+    // Reset pagination buffer
+    _pagedItems.clear();
+    _currentPage = 0;
+  }
+
+  void _onScroll() {
+    if (_isLoadingMore) return;
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      _loadNextPage();
     }
   }
+
+  Future<void> _loadNextPage() async {
+    if (_isLoadingMore) return;
+    setState(() => _isLoadingMore = true);
+    try {
+      final from = _currentPage * _pageSize;
+      final to = from + _pageSize - 1;
+  dynamic q = DatabaseService.client.from('support_requests').select();
+      if (_selectedFilter == 'open') {
+        q = q.eq('status', 'open');
+      } else if (_selectedFilter == 'resolved') {
+        q = q.eq('status', 'resolved');
+      }
+      q = q.order('created_at', ascending: false).range(from, to);
+      final rows = await q; // returns List<dynamic>
+      if (!mounted) return;
+  final list = (rows as List).map((e) => SupportRequest.fromJson(Map<String,dynamic>.from(e))).toList();
+      setState(() {
+        _pagedItems.addAll(list);
+        if (list.isNotEmpty) _currentPage += 1;
+      });
+    } catch (_) {
+      // ignore pagination errors gracefully
+    } finally {
+      if (mounted) setState(() => _isLoadingMore = false);
+    }
+  }
+
+  // Realtime stream for support requests (server-side filtered)
+  Stream<List<SupportRequest>> _supportRequestsStream() => _stream ?? const Stream.empty();
 
   @override
   Widget build(BuildContext context) {
@@ -86,46 +156,130 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _fetchSupportRequests(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator());
-          }
+      body: Column(
+        children: [
+          // Counters
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(color: AppColor.primary.withOpacity(0.05)),
+            child: Builder(
+              builder: (context) {
+                final counts = SupportCountsProvider.maybeOf(context);
+                final open = counts?.open ?? _openCount;
+                final resolved = counts?.resolved ?? _resolvedCount;
+                return Row(
+                  children: [
+                    _statChip(Icons.inbox, 'Open', open, AppColor.warning),
+                    SizedBox(width: 8),
+                    _statChip(Icons.check_circle, 'Resolved', resolved, AppColor.success),
+                  ],
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Row(
+              children: [
+                FilterChip(
+                  selected: _selectedFilter == 'all',
+                  label: Text('All'),
+                  onSelected: (_) {
+                    setState(() => _selectedFilter = 'all');
+                    _attachStream();
+                    _loadNextPage();
+                  },
+                ),
+                SizedBox(width: 8),
+                FilterChip(
+                  selected: _selectedFilter == 'open',
+                  label: Text('Open'),
+                  onSelected: (_) {
+                    setState(() => _selectedFilter = 'open');
+                    _attachStream();
+                    _loadNextPage();
+                  },
+                ),
+                SizedBox(width: 8),
+                FilterChip(
+                  selected: _selectedFilter == 'resolved',
+                  label: Text('Resolved'),
+                  onSelected: (_) {
+                    setState(() => _selectedFilter = 'resolved');
+                    _attachStream();
+                    _loadNextPage();
+                  },
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<SupportRequest>>(
+              stream: _supportRequestsStream(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting && _pagedItems.isEmpty) {
+                  return Center(child: CircularProgressIndicator());
+                }
+                // Merge stream updates into the paged buffer by id (newest first)
+                final updates = snapshot.data ?? [];
+                if (updates.isNotEmpty) {
+                  final byId = {for (final r in _pagedItems) (r.id ?? '').toString(): r};
+                  for (final u in updates) {
+                    byId[(u.id ?? '').toString()] = u;
+                  }
+                  final merged = byId.values.toList()
+                    ..sort((a,b){
+                      final ta = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                      final tb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+                      return tb.compareTo(ta);
+                    });
+                  // Show only what we've paged in so far
+                  _pagedItems
+                    ..clear()
+                    ..addAll(merged.take((_currentPage+1) * _pageSize));
 
-          if (snapshot.hasError) {
-            return Center(
-              child: Text('Error loading support requests: ${snapshot.error}'),
-            );
-          }
+                  // Counts UI now reads from SupportCountsNotifier; we keep local
+                  // values only if the notifier isn't found.
+                }
 
-          final requests = snapshot.data ?? [];
-
-          if (requests.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.support_agent, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text(
-                    'No support requests found',
-                    style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return ListView.builder(
-            padding: EdgeInsets.all(16),
-            itemCount: requests.length,
-            itemBuilder: (context, index) {
-              final request = requests[index];
-              return _buildSupportRequestCard(request['id'].toString(), request);
-            },
-          );
-        },
+                if (_pagedItems.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.support_agent, size: 64, color: Colors.grey),
+                        SizedBox(height: 16),
+                        Text('No support requests found', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                      ],
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  key: const PageStorageKey<String>('admin_support_requests_list'),
+                  controller: _scrollController,
+                  padding: EdgeInsets.all(16),
+                  itemCount: _pagedItems.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == _pagedItems.length) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                        child: Center(
+                          child: _isLoadingMore ? CircularProgressIndicator() : SizedBox.shrink(),
+                        ),
+                      );
+                    }
+                    final request = _pagedItems[index];
+                    return KeyedSubtree(
+                      key: ValueKey<String>((request.id ?? '').toString()),
+                      child: _buildSupportRequestCard((request.id ?? '').toString(), request),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -138,17 +292,18 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
     }
   }
 
-  Widget _buildSupportRequestCard(String requestId, Map<String, dynamic> data) {
-    final status = data['status'] ?? 'open';
-    final category = data['category'] ?? 'Other';
-    final isResolved = status == 'resolved';
+  Widget _buildSupportRequestCard(String requestId, SupportRequest data) {
+  final status = data.status ?? 'open';
+    final category = data.category ?? 'Other';
+  final isResolved = status == 'resolved' || status == 'closed' || status == 'done';
+  final createdAt = _formatDate(data.createdAt);
     
     return Card(
       margin: EdgeInsets.only(bottom: 12),
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
-        onTap: () => _showRequestDetails(requestId, data),
+  onTap: () => _showRequestDetails(requestId, data),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: EdgeInsets.all(16),
@@ -192,7 +347,7 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
               ),
               SizedBox(height: 12),
               Text(
-                data['reason'] ?? 'No subject',
+                data.reason ?? data.title ?? 'No subject',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -203,7 +358,7 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
               ),
               SizedBox(height: 8),
               Text(
-                data['description'] ?? 'No description',
+                data.details ?? data.message ?? 'No description',
                 style: TextStyle(
                   fontSize: 14,
                   color: AppColor.textMedium,
@@ -212,57 +367,43 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
                 overflow: TextOverflow.ellipsis,
               ),
               SizedBox(height: 12),
-              Row(
-                children: [
-                  Icon(Icons.person, size: 16, color: AppColor.textMedium),
-                  SizedBox(width: 4),
-                  Text(
-                    data['name'] ?? 'Anonymous',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: AppColor.textMedium,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  Spacer(),
-                  Text(
-                    _formatDate(data['createdAt']),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColor.textLight,
-                    ),
-                  ),
-                ],
-              ),
-              if (data['adminResponse'] != null) ...[
-                SizedBox(height: 12),
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColor.success.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.admin_panel_settings, size: 16, color: AppColor.success),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Admin responded',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: AppColor.success,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+              Row(children: [
+                Icon(Icons.person, size: 16, color: AppColor.textMedium),
+                SizedBox(width: 4),
+                Text(
+                  'Anonymous',
+                  style: TextStyle(fontSize: 14, color: AppColor.textMedium, fontWeight: FontWeight.w500),
                 ),
-              ],
+                Spacer(),
+                Row(children: [
+                  Icon(Icons.access_time, size: 14, color: AppColor.primary),
+                  SizedBox(width: 4),
+                  Text(createdAt, style: TextStyle(fontSize: 12, color: AppColor.primary)),
+                ]),
+              ]),
+              // (Optional) admin response chip could go here if schema provides it.
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _statChip(IconData icon, String label, int count, Color color) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          SizedBox(width: 6),
+          Text('$label: $count', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }
@@ -282,12 +423,12 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
 
   String _formatDate(dynamic timestamp) {
     if (timestamp == null) return 'Unknown';
-    
+
     DateTime date;
     if (timestamp is DateTime) {
-      date = timestamp;
+      date = timestamp.toLocal();
     } else if (timestamp is String) {
-      date = DateTime.parse(timestamp);
+      date = DateTime.parse(timestamp).toLocal();
     } else {
       return 'Unknown';
     }
@@ -306,12 +447,20 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
     }
   }
 
-  void _showRequestDetails(String requestId, Map<String, dynamic> data) {
+  @override
+  void dispose() {
+    _countsTimer?.cancel();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _showRequestDetails(String requestId, SupportRequest data) {
     showDialog(
       context: context,
       builder: (context) => AdminSupportRequestDialog(
         requestId: requestId,
-        requestData: data,
+  requestData: data,
         onResponseSent: () {
           // Refresh the list or show success message
           ScaffoldMessenger.of(context).showSnackBar(
@@ -328,13 +477,13 @@ class _AdminSupportRequestsPageState extends State<AdminSupportRequestsPage> {
 
 class AdminSupportRequestDialog extends StatefulWidget {
   final String requestId;
-  final Map<String, dynamic> requestData;
+  final SupportRequest requestData;
   final VoidCallback onResponseSent;
 
   const AdminSupportRequestDialog({
     super.key,
-    required this.requestId,
-    required this.requestData,
+  required this.requestId,
+  required this.requestData,
     required this.onResponseSent,
   });
 
@@ -345,40 +494,78 @@ class AdminSupportRequestDialog extends StatefulWidget {
 class _AdminSupportRequestDialogState extends State<AdminSupportRequestDialog> {
   final _responseController = TextEditingController();
   bool _isSubmitting = false;
+  final List<Map<String, dynamic>> _localMsgs = [];
+
+  String _newClientId() => UniqueKey().toString();
+
+  Color _catColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'technical issue':
+        return AppColor.error;
+      case 'account problem':
+        return AppColor.warning;
+      case 'listing issue':
+        return AppColor.accent;
+      case 'payment problem':
+        return Colors.orange;
+      case 'report content':
+        return Colors.red;
+      case 'bug report':
+        return AppColor.error;
+      case 'feature request':
+        return Colors.purple;
+      default:
+        return AppColor.primary;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.requestData;
-    
+  final data = widget.requestData;
+
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.9,
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.8,
-          maxWidth: 600,
-        ),
-        child: Column(
+      child: SafeArea(
+        child: AnimatedPadding(
+          duration: kThemeAnimationDuration,
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Container(
+          width: MediaQuery.of(context).size.width * 0.95,
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.9,
+            maxWidth: 680,
+          ),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Header
             Container(
-              padding: EdgeInsets.all(20),
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: AppColor.primary,
+                color: Colors.white,
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 12,
+                    offset: Offset(0, 4),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
-                  Icon(Icons.support_agent, color: Colors.white),
-                  SizedBox(width: 12),
+                  Icon(Icons.support_agent, color: AppColor.primary),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'Support Request Details',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: AppColor.primary,
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
@@ -386,192 +573,251 @@ class _AdminSupportRequestDialogState extends State<AdminSupportRequestDialog> {
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(Icons.close, color: Colors.white),
+                    icon: Icon(Icons.close, color: AppColor.textMedium),
                   ),
                 ],
               ),
             ),
-            Flexible(
+            // Body
+            Expanded(
               child: SingleChildScrollView(
-                padding: EdgeInsets.all(20),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildDetailRow('Category', data['category'] ?? 'Other'),
-                    _buildDetailRow('From', data['name'] ?? 'Anonymous'),
-                    if (data['email'] != null) _buildDetailRow('Email', data['email']),
-                    _buildDetailRow('Subject', data['reason'] ?? 'No subject'),
-                    SizedBox(height: 16),
-                    Text(
-                      'Description:',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _catColor(data.category?.toString() ?? 'Other'),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            (data.category ?? 'Other').toString(),
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: ((['resolved','closed','done'].contains((data.status ?? '').toString())) ? AppColor.success : AppColor.warning).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                              (data.status ?? 'open').toUpperCase(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: (['resolved','closed','done'].contains((data.status ?? '').toString())) ? AppColor.success : AppColor.warning,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    SizedBox(height: 8),
+                    const SizedBox(height: 16),
+                    Text('Subject', style: TextStyle(fontWeight: FontWeight.bold, color: AppColor.primary)),
+                    const SizedBox(height: 6),
+                    Text(data.reason ?? data.title ?? 'No subject'),
+                    const SizedBox(height: 16),
+                    Text('Description', style: TextStyle(fontWeight: FontWeight.bold, color: AppColor.primary)),
+                    const SizedBox(height: 6),
                     Container(
                       width: double.infinity,
                       padding: EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.grey[300]!),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: Offset(0, 2)),
+                        ],
                       ),
-                      child: Text(data['description'] ?? 'No description'),
+                      child: Text(data.details ?? data.message ?? 'No description'),
                     ),
-                    SizedBox(height: 16),
-                    
-                    if (data['adminResponse'] != null) ...[
-                      Text(
-                        'Previous Admin Response:',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColor.success.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: AppColor.success.withOpacity(0.3)),
-                        ),
-                        child: Text(data['adminResponse']),
-                      ),
-                      SizedBox(height: 16),
-                    ],
-                    
-                    Text(
-                      'Admin Response:',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    SizedBox(height: 8),
-                    TextFormField(
-                      controller: _responseController,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: 'Type your response to the user...',
-                        border: OutlineInputBorder(),
-                        filled: true,
-                        fillColor: Colors.grey[50],
-                      ),
+                    const SizedBox(height: 20),
+                    const Divider(height: 1),
+                    const SizedBox(height: 12),
+                    Text('Conversation', style: TextStyle(fontWeight: FontWeight.bold, color: AppColor.primary)),
+                    const SizedBox(height: 8),
+                    // Messages stream (merged with locally inserted messages for instant UX)
+                    StreamBuilder<List<SupportMessage>>(
+                      stream: DatabaseService.streamSupportMessagesTyped(widget.requestId),
+                      builder: (context, snapshot) {
+                        final fromStream = snapshot.data ?? [];
+                           final Map<String, SupportMessage> keyed = {};
+                           for (final m in fromStream) {
+                             final mid = (m.id ?? _newClientId());
+                             keyed[mid] = m;
+                           }
+                           for (final m in _localMsgs) {
+                             final mid = (m['id']?.toString() ?? m['clientId']?.toString() ?? _newClientId());
+                             keyed[mid] = SupportMessage(
+                               id: mid,
+                               supportRequestId: widget.requestId,
+                               message: m['message']?.toString(),
+                               senderRole: m['sender_role']?.toString(),
+                               createdAt: DateTime.tryParse(m['created_at']?.toString() ?? ''),
+                             );
+                           }
+                        final msgs = keyed.values.toList()
+                          ..sort((a,b){
+                            final ta = a.createdAt ?? DateTime.now();
+                            final tb = b.createdAt ?? DateTime.now();
+                            return ta.compareTo(tb);
+                          });
+                        if (msgs.isEmpty) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                            child: Text('No messages yet.'),
+                          );
+                        }
+                        return Column(
+                          children: msgs.map((m) {
+                            final isAdmin = (m.senderRole ?? '') == 'admin';
+                            final ts = m.createdAt;
+                            return Align(
+                              alignment: isAdmin ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                margin: EdgeInsets.symmetric(vertical: 6),
+                                padding: EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: isAdmin ? AppColor.primary.withOpacity(0.08) : Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: (isAdmin ? AppColor.primary : Colors.grey[300]!) ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(m.message ?? ''),
+                                    SizedBox(height: 4),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.access_time, size: 10, color: AppColor.textMedium),
+                                        SizedBox(width: 4),
+                                        Text(_formatDate(ts), style: TextStyle(fontSize: 10, color: AppColor.textMedium)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      },
                     ),
                   ],
                 ),
               ),
             ),
+            // Footer with respond + resolve
             Container(
-              padding: EdgeInsets.all(20),
+              padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: Colors.grey[300]!)),
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Colors.grey[200]!)),
               ),
               child: Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text('Cancel'),
-                    ),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _isSubmitting ? null : _sendResponse,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColor.primary,
-                        foregroundColor: Colors.white,
+                    child: TextField(
+                      controller: _responseController,
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Type a response to the user...',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        isDense: true,
                       ),
-                      child: _isSubmitting
-                          ? SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Text('Send Response'),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                    IconButton(
+                    tooltip: 'Send',
+                    onPressed: _isSubmitting
+                        ? null
+                        : () async {
+                            final text = _responseController.text.trim();
+                            if (text.isEmpty) return;
+                            setState(() => _isSubmitting = true);
+                            try {
+                              final clientId = _newClientId();
+                              final local = {
+                                'clientId': clientId,
+                                'support_request_id': widget.requestId,
+                                'message': text,
+                                'sender_role': 'admin',
+                                'created_at': DateTime.now().toIso8601String(),
+                              };
+                              setState(() => _localMsgs.add(local));
+                              final res = await DatabaseService.addSupportMessage(widget.requestId, text, senderRole: 'admin');
+                              if (res != null && mounted) {
+                                // Replace local temp with server row if needed
+                                setState(() {
+                                  _localMsgs.removeWhere((m) => (m['clientId'] == clientId));
+                                });
+                              }
+                              _responseController.clear();
+                            } finally {
+                              if (mounted) setState(() => _isSubmitting = false);
+                            }
+                          },
+                    icon: Icon(Icons.send, color: AppColor.primary),
+                  ),
+                  const SizedBox(width: 8),
+                  if (!['resolved','closed','done'].contains((data.status ?? 'open').toString()))
+                    ElevatedButton(
+                      onPressed: _isSubmitting
+                          ? null
+                          : () async {
+                              setState(() => _isSubmitting = true);
+                              try {
+                                // Use 'resolved' to satisfy DB constraint (support_requests_status_check)
+                                await DatabaseService.updateSupportRequestStatus(widget.requestId, 'resolved');
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _isSubmitting = false);
+                                  Navigator.of(context).pop();
+                                  widget.onResponseSent();
+                                }
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(backgroundColor: AppColor.success, foregroundColor: Colors.white),
+                      child: Text('Mark Resolved'),
+                    ),
                 ],
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: TextStyle(fontWeight: FontWeight.w500),
-            ),
-          ),
-          Expanded(
-            child: Text(value),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _sendResponse() async {
-    if (_responseController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Please enter a response'),
-          backgroundColor: AppColor.error,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isSubmitting = true;
-    });
-
-    try {
-      // For now, just show success message since DatabaseService needs to be implemented
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Support request marked as resolved'),
-          backgroundColor: AppColor.success,
-        ),
-      );
-
-      // Here you would typically send an email to the user
-      // For now, we'll just show success
-      
-      if (mounted) {
-        Navigator.of(context).pop();
-        widget.onResponseSent();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error sending response: $e'),
-            backgroundColor: AppColor.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
-    }
+        ), // end Column
+      ), // end Container
+    ), // end AnimatedPadding
+  ), // end SafeArea
+);
   }
 
   @override
   void dispose() {
     _responseController.dispose();
     super.dispose();
+  }
+
+  String _formatDate(dynamic timestamp) {
+    if (timestamp == null) return 'Unknown';
+    DateTime date;
+    if (timestamp is DateTime) {
+      date = timestamp;
+    } else if (timestamp is String) {
+      date = DateTime.tryParse(timestamp) ?? DateTime.now();
+    } else {
+      return 'Unknown';
+    }
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'Just now';
   }
 }

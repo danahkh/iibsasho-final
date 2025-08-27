@@ -310,20 +310,16 @@ class _CreateListingPageState extends State<CreateListingPage> {
         listingId = listing.id;
       }
 
-      if (listingId != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(widget.listing == null 
-                ? 'Listing created successfully!' 
-                : 'Listing updated successfully!'),
-            backgroundColor: AppColor.success,
-          ),
-        );
-        Navigator.of(context).pop(true); // Return true to indicate success
-      } else {
-        _showError('Failed to save listing. Please try again.');
-      }
-    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(widget.listing == null 
+              ? 'Listing created successfully!' 
+              : 'Listing updated successfully!'),
+          backgroundColor: AppColor.success,
+        ),
+      );
+      Navigator.of(context).pop(true); // Return true to indicate success
+        } catch (e) {
       _showError('Error saving listing: $e');
     } finally {
       setState(() {

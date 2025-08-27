@@ -1,6 +1,10 @@
+-- Ensure required extensions (id defaults and functions)
+CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; -- in case uuid_generate_v4() is used elsewhere
+
 -- Create notifications table for user notifications
 CREATE TABLE notifications (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     type VARCHAR(50) NOT NULL CHECK (type IN ('comment', 'message', 'favorite')),
     title VARCHAR(255) NOT NULL,
@@ -56,3 +60,21 @@ BEGIN
     AND expires_at < timezone('utc'::text, now());
 END;
 $$ LANGUAGE plpgsql;
+
+-- Ensure the notifications table is part of the realtime publication so supabase.from('notifications').stream works
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+    ) THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+            AND schemaname = 'public'
+            AND tablename = 'notifications'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
+    END IF;
+END $$;

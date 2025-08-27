@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import '../constant/app_color.dart';
+import '../core/services/notification_service.dart';
+import '../core/services/chat_service.dart' as Chats;
+import '../core/model/chat.dart';
+import '../core/utils/supabase_helper.dart';
 
 /// Bottom navigation bar (without a dedicated Search icon). Matches PageSwitcher ordering.
 class CustomBottomNavigationBar extends StatelessWidget {
@@ -31,8 +35,28 @@ class CustomBottomNavigationBar extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildNavItem(index: 0, icon: Icons.chat_bubble_outline, label: 'Chats'),
-              _buildNavItem(index: 1, icon: Icons.notifications_outlined, label: 'Alerts'),
+              // Chats (with unread badge)
+              StreamBuilder<List<Chat>>(
+                stream: () {
+                  final u = SupabaseHelper.currentUser;
+                  if (u == null) return Stream.value(<Chat>[]);
+                  return Chats.ChatService.getUserChats(u.id);
+                }(),
+                builder: (context, snapshot) {
+                  final chats = snapshot.data ?? const <Chat>[];
+                  final unread = chats.fold<int>(0, (sum, c) => sum + (c.unreadCount));
+                  return _buildNavItem(index: 0, icon: Icons.chat_bubble_outline, label: 'Chats', badgeCount: unread);
+                },
+              ),
+              // Notifications (with unread badge)
+              StreamBuilder(
+                stream: NotificationService.getUserNotifications(),
+                builder: (context, snapshot) {
+                  final notifications = snapshot.data as List? ?? const [];
+                  final unread = notifications.where((n) => !(n.isRead ?? false)).length;
+                  return _buildNavItem(index: 1, icon: Icons.notifications_outlined, label: 'Alerts', badgeCount: unread);
+                },
+              ),
               _buildCreateButton(),
               _buildNavItem(index: 3, icon: Icons.favorite_outline, label: 'Favorites'),
               _buildNavItem(index: 4, icon: Icons.home_outlined, label: 'Home'),
@@ -47,6 +71,7 @@ class CustomBottomNavigationBar extends StatelessWidget {
     required int index,
     required IconData icon,
     required String label,
+    int badgeCount = 0,
   }) {
     final bool active = currentIndex == index;
     return GestureDetector(
@@ -58,7 +83,34 @@ class CustomBottomNavigationBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 24, color: active ? AppColor.primary : AppColor.primary.withOpacity(0.5)),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, size: 24, color: active ? AppColor.primary : AppColor.primary.withOpacity(0.5)),
+                if (badgeCount > 0)
+                  Positioned(
+                    right: -6,
+                    top: -6,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: AppColor.error,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                      child: Text(
+                        badgeCount > 99 ? '99+' : badgeCount.toString(),
+                        style: TextStyle(
+                          color: AppColor.textLight,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             const SizedBox(height: 2),
             Text(
               label,

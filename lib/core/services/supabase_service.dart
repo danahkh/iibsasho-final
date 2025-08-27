@@ -153,6 +153,17 @@ class SupabaseService {
 
   static Future<String?> createSupportRequest(Map<String, dynamic> requestData) async {
     try {
+      // Ensure a title exists if the backend expects it
+      final existingTitle = (requestData['title'] as String?)?.trim();
+      if (existingTitle == null || existingTitle.isEmpty) {
+        final reason = (requestData['reason'] as String?)?.trim();
+        final category = (requestData['category'] as String?)?.trim();
+        requestData['title'] = (reason != null && reason.isNotEmpty)
+            ? reason
+            : (category != null && category.isNotEmpty)
+                ? 'Support: $category'
+                : 'Support Request';
+      }
       final response = await client
           .from(SupabaseConfig.supportRequestsTable)
           .insert(requestData)

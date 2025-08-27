@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/utils/supabase_helper.dart';
 import 'core/utils/app_logger.dart';
 import 'views/screens/page_switcher.dart';
+import 'core/notifiers/support_counts_notifier.dart';
 
 // import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
@@ -70,7 +71,8 @@ class _MyAppState extends State<MyApp> {
           );
         }
         if (snapshot.data != null) {
-          return MaterialApp(
+          return SupportCountsScope(
+            child: MaterialApp(
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               scaffoldBackgroundColor: AppColor.background,
@@ -137,9 +139,11 @@ class _MyAppState extends State<MyApp> {
             },
             locale: _locale,
             home: PageSwitcher(),
+          ),
           );
         } else {
-          return MaterialApp(
+          return SupportCountsScope(
+            child: MaterialApp(
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               scaffoldBackgroundColor: AppColor.background,
@@ -206,6 +210,7 @@ class _MyAppState extends State<MyApp> {
             },
             locale: _locale,
             home: PageSwitcher(),
+          ),
           );
         }
       },
@@ -220,8 +225,13 @@ class _MyAppState extends State<MyApp> {
       // Check if user profile exists in users table
       final profile = await SupabaseHelper.getCurrentUserProfile();
       if (profile == null) {
-        await SupabaseHelper.signOut();
-        return null;
+        // Seed a minimal profile instead of signing out to keep session intact
+        await SupabaseHelper.upsertUserProfile({
+          'email': user.email,
+          'display_name': (user.userMetadata?['name'] as String?) ?? (user.email?.split('@').first ?? 'User'),
+          'created_at': DateTime.now().toIso8601String(),
+        });
+        return user;
       }
       return user;
     } catch (e) {

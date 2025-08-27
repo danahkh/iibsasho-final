@@ -28,7 +28,7 @@ class Chat {
 
   factory Chat.fromMap(Map<String, dynamic> map) {
     // unread_count may be an int, string, or json (per-user map). Default to 0.
-    int _parseUnread(dynamic v) {
+    int parseUnread(dynamic v) {
       if (v is int) return v;
       if (v is String) return int.tryParse(v) ?? 0;
       if (v is Map) return 0; // per-user map not resolvable here
@@ -42,7 +42,7 @@ class Chat {
       listingTitle: map['listing_title'] ?? '',
       lastMessage: map['last_message'] ?? '',
       lastMessageTime: DateTime.parse(map['last_message_time'] ?? DateTime.now().toIso8601String()),
-      unreadCount: _parseUnread(map['unread_count']),
+      unreadCount: parseUnread(map['unread_count']),
       otherUserName: map['other_user_name'] ?? '',
       otherUserAvatar: map['other_user_avatar'],
       createdAt: DateTime.parse(map['created_at'] ?? DateTime.now().toIso8601String()),

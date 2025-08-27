@@ -296,21 +296,23 @@ class _TestSupportPageState extends State<TestSupportPage> {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       
+      final reason = _reasonController.text.trim();
+      final category = _selectedCategory;
       final requestData = {
-        'category': _selectedCategory,
+        'category': category,
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'user_id': user?.id ?? '',
-        'reason': _reasonController.text.trim(),
+        'reason': reason,
+        'title': reason.isNotEmpty ? reason : (category.isNotEmpty ? 'Support: $category' : 'Support Request'),
         'description': _descriptionController.text.trim(),
+    'message': _descriptionController.text.trim().isNotEmpty
+      ? _descriptionController.text.trim()
+      : (reason.isNotEmpty ? reason : 'Support request'),
         'status': 'open',
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
       };
-      
-      await DatabaseService.client
-          .from('support_requests')
-          .insert(requestData);
+
+      await DatabaseService.createSupportRequest(requestData);
       
       // Support request created successfully
 

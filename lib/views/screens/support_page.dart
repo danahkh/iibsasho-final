@@ -18,10 +18,16 @@ class _SupportPageState extends State<SupportPage> {
   final _nameController = TextEditingController();
   final _reasonController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final _replyController = TextEditingController();
   bool _isSubmitting = false;
+  bool _isSendingReply = false;
   bool _isAdmin = false;
   bool _isLoadingAdminCheck = true;
   String _selectedCategory = 'General Inquiry';
+  bool _nameReadOnly = false;
+  String _adminFilter = 'all'; // all | open | resolved
+  int _openCount = 0;
+  int _resolvedCount = 0;
 
   final List<String> _supportCategories = [
     'General Inquiry',
@@ -44,25 +50,44 @@ class _SupportPageState extends State<SupportPage> {
 
   Future<void> _checkAdminStatus() async {
     final isAdmin = await AdminAccessService.isCurrentUserAdmin();
+    if (!mounted) return;
     setState(() {
       _isAdmin = isAdmin;
       _isLoadingAdminCheck = false;
     });
   }
 
-  void _prefillUserInfo() {
+  Future<void> _prefillUserInfo() async {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      _nameController.text = user.userMetadata?['display_name'] ?? '';
-    }
-  }
+    if (user == null) return;
+    try {
+  final profile = await DatabaseService.getCurrentUserProfile();
+  final fromProfile = (profile?['display_name'] as String?)?.trim();
+      final meta = user.userMetadata ?? {};
+      final displayNameMeta = (meta['display_name'] as String?)?.trim();
+      final fullNameMeta = (meta['full_name'] as String?)?.trim();
+      final email = (user.email ?? '').trim();
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _reasonController.dispose();
-    _descriptionController.dispose();
-    super.dispose();
+      String derived = '';
+      if (fromProfile != null && fromProfile.isNotEmpty) {
+        derived = fromProfile;
+      } else if (displayNameMeta != null && displayNameMeta.isNotEmpty) {
+        derived = displayNameMeta;
+      } else if (fullNameMeta != null && fullNameMeta.isNotEmpty) {
+        derived = fullNameMeta;
+      } else if (email.isNotEmpty && email.contains('@')) {
+        derived = email.split('@').first;
+      }
+
+      if (derived.isNotEmpty) {
+        setState(() {
+          _nameController.text = derived;
+          _nameReadOnly = true;
+        });
+      }
+    } catch (_) {
+      // Best effort only
+    }
   }
 
   @override
@@ -86,30 +111,51 @@ class _SupportPageState extends State<SupportPage> {
       );
     }
 
-    return DefaultTabController(
-      length: _isAdmin ? 1 : 2,
-      child: Scaffold(
+    if (_isAdmin) {
+      return Scaffold(
         backgroundColor: AppColor.background,
         appBar: AppBar(
-          backgroundColor: AppColor.primary,
-          elevation: 2,
-            shadowColor: AppColor.shadowColor,
           centerTitle: true,
           leading: IconButton(
-            icon: Icon(Icons.arrow_back, color: AppColor.textLight),
+            icon: Icon(Icons.arrow_back, color: AppColor.textOnPrimary),
             onPressed: () => Navigator.pop(context),
           ),
           title: const AppLogoWidget(
             height: 28,
             isWhiteVersion: true,
           ),
-          bottom: !_isAdmin ? PreferredSize(
+          backgroundColor: AppColor.primary,
+          elevation: 0,
+          iconTheme: IconThemeData(color: AppColor.iconLight),
+        ),
+        body: _buildAdminSupportView(),
+      );
+    }
+
+    // Non-admin: tabs for Submit + My Cases
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: AppColor.background,
+        appBar: AppBar(
+          centerTitle: true,
+          leading: IconButton(
+            icon: Icon(Icons.arrow_back, color: AppColor.textOnPrimary),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: const AppLogoWidget(
+            height: 28,
+            isWhiteVersion: true,
+          ),
+          backgroundColor: AppColor.primary,
+          elevation: 0,
+          iconTheme: IconThemeData(color: AppColor.iconLight),
+          bottom: PreferredSize(
             preferredSize: const Size.fromHeight(44),
             child: Align(
               alignment: Alignment.centerLeft,
               child: TabBar(
                 isScrollable: true,
-                overlayColor: WidgetStateProperty.all(Colors.transparent),
                 dividerColor: Colors.transparent,
                 indicator: UnderlineTabIndicator(
                   borderSide: BorderSide(color: AppColor.accentLight, width: 3),
@@ -117,7 +163,7 @@ class _SupportPageState extends State<SupportPage> {
                 ),
                 indicatorSize: TabBarIndicatorSize.label,
                 labelColor: Colors.white,
-                unselectedLabelColor: Colors.white.withOpacity(0.65),
+                unselectedLabelColor: Colors.white.withOpacity(0.7),
                 labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, letterSpacing: 0.3),
                 unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
                 tabs: const [
@@ -126,9 +172,9 @@ class _SupportPageState extends State<SupportPage> {
                 ],
               ),
             ),
-          ) : null,
+          ),
         ),
-        body: _isAdmin ? _buildAdminSupportView() : TabBarView(
+        body: TabBarView(
           children: [
             _buildUserSupportForm(),
             _buildMyCasesTab(),
@@ -182,16 +228,74 @@ class _SupportPageState extends State<SupportPage> {
             ],
           ),
         ),
-        // Support Requests List
+        // Counters row
+        Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(color: AppColor.primary.withOpacity(0.05)),
+          child: Row(
+            children: [
+              _statChip(Icons.inbox, 'Open', _openCount, AppColor.warning),
+              SizedBox(width: 8),
+              _statChip(Icons.check_circle, 'Resolved', _resolvedCount, AppColor.success),
+            ],
+          ),
+        ),
+        // Filters
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Row(
+            children: [
+              FilterChip(
+                selected: _adminFilter == 'all',
+                label: Text('All'),
+                onSelected: (_) => setState(() => _adminFilter = 'all'),
+              ),
+              SizedBox(width: 8),
+              FilterChip(
+                selected: _adminFilter == 'open',
+                label: Text('Open'),
+                onSelected: (_) => setState(() => _adminFilter = 'open'),
+              ),
+              SizedBox(width: 8),
+              FilterChip(
+                selected: _adminFilter == 'resolved',
+                label: Text('Resolved'),
+                onSelected: (_) => setState(() => _adminFilter = 'resolved'),
+              ),
+            ],
+          ),
+        ),
+        // Support Requests List (Realtime)
         Expanded(
-          child: FutureBuilder<List<Map<String, dynamic>>>(
-            future: DatabaseService.getSupportRequests(),
+          child: StreamBuilder<List<Map<String, dynamic>>>(
+            stream: Supabase.instance.client
+                .from('support_requests')
+                .stream(primaryKey: ['id'])
+                .order('created_at', ascending: false),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return Center(child: CircularProgressIndicator());
               }
 
-              if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              final all = snapshot.data ?? [];
+              bool isOpen(Map<String,dynamic> e){
+                final st = (e['status'] ?? 'open').toString();
+                return st == 'open' || st == 'pending' || st == 'new';
+              }
+              bool isResolvedLike(Map<String,dynamic> e){
+                final st = (e['status'] ?? '').toString();
+                return st == 'resolved' || st == 'closed' || st == 'done';
+              }
+              _openCount = all.where(isOpen).length;
+              _resolvedCount = all.where(isResolvedLike).length;
+              final requests = _adminFilter == 'open'
+                  ? all.where(isOpen).toList()
+                  : _adminFilter == 'resolved'
+                      ? all.where(isResolvedLike).toList()
+                      : all;
+
+              if (requests.isEmpty) {
                 return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -200,23 +304,23 @@ class _SupportPageState extends State<SupportPage> {
                       SizedBox(height: 16),
                       Text(
                         'No support requests yet',
-                        style: TextStyle(
-                          fontSize: 18,
-                          color: AppColor.textMedium,
-                        ),
+                        style: TextStyle(fontSize: 18, color: AppColor.textMedium),
                       ),
                     ],
                   ),
                 );
               }
 
-              final requests = snapshot.data!;
               return ListView.builder(
+                key: const PageStorageKey<String>('user_support_requests_list'),
                 padding: EdgeInsets.all(16),
                 itemCount: requests.length,
                 itemBuilder: (context, index) {
                   final request = requests[index];
-                  return _buildSupportRequestCard(request['id'].toString(), request);
+                  return KeyedSubtree(
+                    key: ValueKey<String>(request['id'].toString()),
+                    child: _buildSupportRequestCard(request['id'].toString(), request),
+                  );
                 },
               );
             },
@@ -229,7 +333,7 @@ class _SupportPageState extends State<SupportPage> {
   Widget _buildSupportRequestCard(String requestId, Map<String, dynamic> data) {
     final timestamp = data['created_at'];
     final status = data['status'] ?? 'open';
-    final isResolved = status == 'resolved';
+  final isResolved = status == 'resolved' || status == 'closed' || status == 'done';
 
     return Card(
       margin: EdgeInsets.only(bottom: 16),
@@ -385,49 +489,208 @@ class _SupportPageState extends State<SupportPage> {
     }
   }
 
+  
   void _showRequestDetails(String requestId, Map<String, dynamic> data) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Support Request Details'),
-        content: SingleChildScrollView(
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: SafeArea(
+          child: AnimatedPadding(
+            duration: kThemeAnimationDuration,
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: BoxConstraints(maxWidth: 640, maxHeight: MediaQuery.of(context).size.height * 0.85),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildDetailRow('Category', data['category'] ?? 'Other'),
-              _buildDetailRow('From', data['name'] ?? 'Anonymous'),
-              if (data['email'] != null) _buildDetailRow('Email', data['email']),
-              _buildDetailRow('Subject', data['reason'] ?? 'No subject'),
-              SizedBox(height: 8),
-              Text(
-                'Description:',
-                style: TextStyle(fontWeight: FontWeight.bold),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info, color: AppColor.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text('Support Request Details', style: TextStyle(color: AppColor.primary, fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                    IconButton(onPressed: () => Navigator.of(context).pop(), icon: Icon(Icons.close, color: AppColor.textMedium)),
+                  ],
+                ),
               ),
-              SizedBox(height: 4),
-              Text(data['description'] ?? 'No description'),
-              SizedBox(height: 16),
-              Text(
-                'Status: ${data['status'] ?? 'open'}',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: data['status'] == 'resolved' ? AppColor.success : AppColor.warning,
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildDetailRow('Category', data['category'] ?? 'Other'),
+                      _buildDetailRow('From', data['name'] ?? 'Anonymous'),
+                      if (data['email'] != null) _buildDetailRow('Email', data['email']),
+                      _buildDetailRow('Subject', data['reason'] ?? 'No subject'),
+                      const SizedBox(height: 16),
+                      Text('Description', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColor.primary)),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[300]!),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: Offset(0, 2))],
+                        ),
+                        child: Text(data['description'] ?? 'No description'),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Text('Status: ', style: TextStyle(fontWeight: FontWeight.bold, color: AppColor.primary)),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: (data['status'] == 'resolved' ? AppColor.success : AppColor.warning).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              (data['status'] ?? 'open').toString().toUpperCase(),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: data['status'] == 'resolved' ? AppColor.success : AppColor.warning,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      const Divider(height: 1),
+                      const SizedBox(height: 12),
+                      Text('Conversation', style: TextStyle(fontWeight: FontWeight.bold, color: AppColor.primary)),
+                      const SizedBox(height: 8),
+                      StreamBuilder<List<Map<String, dynamic>>>(
+                        stream: DatabaseService.streamSupportMessages(requestId),
+                        builder: (context, snapshot) {
+                          final fromStream = snapshot.data ?? [];
+                          final keyed = <String, Map<String, dynamic>>{};
+                          for (final m in fromStream) {
+                            final id = (m['id']?.toString() ?? m['clientId']?.toString() ?? UniqueKey().toString());
+                            keyed[id] = m;
+                          }
+                          final msgs = keyed.values.toList()
+                            ..sort((a,b){
+                              final ta = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime.now();
+                              final tb = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime.now();
+                              return ta.compareTo(tb);
+                            });
+                          if (msgs.isEmpty) {
+                            return Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12.0),
+                              child: Text('No messages yet.'),
+                            );
+                          }
+                          return Column(
+                            children: msgs.map((m) {
+                              final isAdminMsg = (m['sender_role']?.toString() ?? '') == 'admin';
+                              final ts = m['created_at'];
+                              return Align(
+                                alignment: isAdminMsg ? Alignment.centerRight : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: isAdminMsg ? AppColor.primary.withOpacity(0.08) : Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: (isAdminMsg ? AppColor.primary : Colors.grey[300]!) ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(m['message']?.toString() ?? ''),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.access_time, size: 10, color: AppColor.textMedium),
+                                          const SizedBox(width: 4),
+                                          Text(_formatTimestamp(ts), style: const TextStyle(fontSize: 10, color: AppColor.textMedium)),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Colors.grey[200]!))),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _replyController,
+                        minLines: 1,
+                        maxLines: 4,
+                        decoration: InputDecoration(
+                          hintText: 'Write a message...',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Send',
+                      onPressed: _isSendingReply
+                          ? null
+                          : () async {
+                              final text = _replyController.text.trim();
+                              if (text.isEmpty) return;
+                              setState(() => _isSendingReply = true);
+                              try {
+                                // Note: server response will stream back; local optimistic add is optional here
+                                await DatabaseService.addSupportMessage(requestId, text, senderRole: _isAdmin ? 'admin' : 'user');
+                                _replyController.clear();
+                              } finally {
+                                if (mounted) setState(() => _isSendingReply = false);
+                              }
+                            },
+                      icon: Icon(Icons.send, color: AppColor.primary),
+                    ),
+                    const SizedBox(width: 8),
+                    if (_isAdmin && !['resolved','closed','done'].contains((data['status'] ?? 'open').toString()))
+                      ElevatedButton(
+                        onPressed: _isSendingReply
+                            ? null
+                            : () async {
+                                await _markAsResolved(requestId);
+                              },
+                        style: ElevatedButton.styleFrom(backgroundColor: AppColor.success, foregroundColor: Colors.white),
+                        child: Text('Mark Resolved'),
+                      ),
+                  ],
                 ),
               ),
             ],
           ),
-        ),
-        actions: [
-          if (data['status'] != 'resolved')
-            TextButton(
-              onPressed: () => _markAsResolved(requestId),
-              child: Text('Mark as Resolved', style: TextStyle(color: AppColor.success)),
             ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text('Close'),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -453,6 +716,7 @@ class _SupportPageState extends State<SupportPage> {
 
   Future<void> _markAsResolved(String requestId) async {
     try {
+      // Use 'resolved' to comply with current DB check constraint
       final success = await DatabaseService.updateSupportRequestStatus(requestId, 'resolved');
       Navigator.of(context).pop(); // Close dialog
       ScaffoldMessenger.of(context).showSnackBar(
@@ -535,7 +799,7 @@ class _SupportPageState extends State<SupportPage> {
                 SizedBox(height: 16),
 
                 // Name Field
-                TextFormField(
+        TextFormField(
                   controller: _nameController,
                   decoration: InputDecoration(
                     labelText: 'Your Name',
@@ -549,12 +813,17 @@ class _SupportPageState extends State<SupportPage> {
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide(color: AppColor.primary, width: 2),
                     ),
-                    filled: true,
-                    fillColor: AppColor.surface,
+          filled: true,
+          fillColor: _nameReadOnly ? Colors.grey[100] : AppColor.surface,
                   ),
+                  readOnly: _nameReadOnly,
                   validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your name';
+                    // If logged-in, auto-fill is allowed and name is optional
+                    final user = Supabase.instance.client.auth.currentUser;
+                    if (user == null) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter your name';
+                      }
                     }
                     return null;
                   },
@@ -727,7 +996,20 @@ class _SupportPageState extends State<SupportPage> {
           return Center(child: CircularProgressIndicator());
         }
         final all = snapshot.data ?? [];
-        final my = all.where((r)=> r['user_id']==userId).toList();
+        // Hide resolved tickets after 24 hours
+        final now = DateTime.now();
+        final my = all.where((r){
+          if (r['user_id'] != userId) return false;
+          final status = (r['status'] ?? 'open').toString();
+          final isResolvedLike = status == 'resolved' || status == 'closed' || status == 'done';
+          if (!isResolvedLike) return true;
+          final closedAtStr = (r['resolved_at'] ?? r['updated_at'] ?? r['created_at'])?.toString();
+          if (closedAtStr == null) return true;
+          final parsed = DateTime.tryParse(closedAtStr);
+          final closedAt = parsed?.toLocal();
+          if (closedAt == null) return true;
+          return now.difference(closedAt).inHours < 24;
+        }).toList();
         if (my.isEmpty) {
           return Center(child: Text('You have not submitted any support tickets yet.'));
         }
@@ -752,10 +1034,10 @@ class _SupportPageState extends State<SupportPage> {
               trailing: Container(
                 padding: EdgeInsets.symmetric(horizontal:8, vertical:4),
                 decoration: BoxDecoration(
-                  color: (r['status']=='resolved'? AppColor.success : AppColor.warning).withOpacity(0.15),
+                  color: ((r['status']=='resolved' || r['status']=='closed' || r['status']=='done') ? AppColor.success : AppColor.warning).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text((r['status']??'open').toString().toUpperCase(), style: TextStyle(fontSize:10, fontWeight: FontWeight.bold, color: r['status']=='resolved'? AppColor.success : AppColor.warning)),
+                child: Text((r['status']??'open').toString().toUpperCase(), style: TextStyle(fontSize:10, fontWeight: FontWeight.bold, color: (r['status']=='resolved' || r['status']=='closed' || r['status']=='done') ? AppColor.success : AppColor.warning)),
               ),
               onTap: ()=> _showRequestDetails(r['id'].toString(), r),
             );
@@ -764,6 +1046,25 @@ class _SupportPageState extends State<SupportPage> {
           itemCount: my.length,
         );
       },
+    );
+  }
+
+  Widget _statChip(IconData icon, String label, int count, Color color) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          SizedBox(width: 6),
+          Text('$label: $count', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+        ],
+      ),
     );
   }
 
@@ -780,13 +1081,40 @@ class _SupportPageState extends State<SupportPage> {
 
     try {
       final user = Supabase.instance.client.auth.currentUser;
+      // Ensure name is set for logged-in users even if field was empty
+      String name = _nameController.text.trim();
+      if ((name.isEmpty) && user != null) {
+        final meta = user.userMetadata ?? {};
+        final displayName = (meta['display_name'] as String?)?.trim();
+        final fullName = (meta['full_name'] as String?)?.trim();
+        final email = (user.email ?? '').trim();
+        if (displayName != null && displayName.isNotEmpty) {
+          name = displayName;
+        } else if (fullName != null && fullName.isNotEmpty) {
+          name = fullName;
+        } else if (email.isNotEmpty && email.contains('@')) {
+          name = email.split('@').first;
+        }
+      }
       final requestData = {
-        'name': _nameController.text.trim(),
+        'name': name,
         'email': user?.email,
         'user_id': user?.id,
         'category': _selectedCategory,
         'reason': _reasonController.text.trim(),
+    // Provide a title for backends with NOT NULL constraint
+    'title': _reasonController.text.trim().isNotEmpty
+      ? _reasonController.text.trim()
+      : (_selectedCategory.isNotEmpty
+        ? 'Support: $_selectedCategory'
+        : 'Support Request'),
         'description': _descriptionController.text.trim(),
+    // Some schemas use "message" NOT NULL; mirror description into message
+    'message': _descriptionController.text.trim().isNotEmpty
+      ? _descriptionController.text.trim()
+      : (_reasonController.text.trim().isNotEmpty
+        ? _reasonController.text.trim()
+        : 'Support request'),
         'status': 'open',
       };
       final id = await DatabaseService.createSupportRequest(requestData);
@@ -832,5 +1160,14 @@ class _SupportPageState extends State<SupportPage> {
         _isSubmitting = false;
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _reasonController.dispose();
+    _descriptionController.dispose();
+    _replyController.dispose();
+    super.dispose();
   }
 }

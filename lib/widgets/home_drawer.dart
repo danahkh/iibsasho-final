@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../constant/app_color.dart';
+import '../../core/services/notification_service.dart';
+import '../../core/services/chat_service.dart' as Chats;
+import '../../core/model/chat.dart';
 import '../../core/utils/supabase_helper.dart';
 import '../views/screens/my_listings_page.dart';
 import '../views/screens/chats_page.dart';
@@ -344,19 +347,60 @@ class _HomeDrawerState extends State<HomeDrawer> {
                     Navigator.of(context).push(MaterialPageRoute(builder: (context) => MyListingsPage()));
                   },
                 ),
-                ListTile(
-                  // Match bottom nav chat icon style
-                  leading: Icon(Icons.chat_bubble_outline, color: AppColor.iconPrimary),
-                  title: Text('Chats', style: TextStyle(color: AppColor.textPrimary)),
-                  onTap: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (context) => ChatsPage()));
+                // Chats with unread badge
+                StreamBuilder<List<Chat>>(
+                  stream: () {
+                    final u = SupabaseHelper.currentUser;
+                    if (u == null) return Stream.value(<Chat>[]);
+                    return Chats.ChatService.getUserChats(u.id);
+                  }(),
+                  builder: (context, snapshot) {
+                    final chats = snapshot.data ?? const <Chat>[];
+                    final unread = chats.fold<int>(0, (sum, c) => sum + (c.unreadCount));
+                    return ListTile(
+                      leading: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Icon(Icons.chat_bubble_outline, color: AppColor.iconPrimary),
+                          if (unread > 0)
+                            Positioned(
+                              right: -6,
+                              top: -6,
+                              child: _badge(unread),
+                            ),
+                        ],
+                      ),
+                      title: Text('Chats', style: TextStyle(color: AppColor.textPrimary)),
+                      onTap: () {
+                        Navigator.of(context).push(MaterialPageRoute(builder: (context) => ChatsPage()));
+                      },
+                    );
                   },
                 ),
-                ListTile(
-                  leading: Icon(Icons.notifications, color: AppColor.iconPrimary),
-                  title: Text('Notification', style: TextStyle(color: AppColor.textPrimary)),
-                  onTap: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (context) => NotificationPage()));
+                // Notifications with unread badge
+                StreamBuilder(
+                  stream: NotificationService.getUserNotifications(),
+                  builder: (context, snapshot) {
+                    final notifications = snapshot.data as List? ?? const [];
+                    final unread = notifications.where((n) => !(n.isRead ?? false)).length;
+                    return ListTile(
+                      leading: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Icon(Icons.notifications, color: AppColor.iconPrimary),
+                          if (unread > 0)
+                            Positioned(
+                              right: -6,
+                              top: -6,
+                              child: _badge(unread),
+                            ),
+                        ],
+                      ),
+                      title: Text('Notification', style: TextStyle(color: AppColor.textPrimary)),
+                      onTap: () {
+                        Navigator.of(context).push(MaterialPageRoute(builder: (context) => NotificationPage()));
+                      },
+                    );
                   },
                 ),
                 ListTile(
@@ -395,6 +439,26 @@ class _HomeDrawerState extends State<HomeDrawer> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _badge(int count) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppColor.error,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+      child: Text(
+        count > 99 ? '99+' : count.toString(),
+        style: TextStyle(
+          color: AppColor.textLight,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+        ),
+        textAlign: TextAlign.center,
       ),
     );
   }

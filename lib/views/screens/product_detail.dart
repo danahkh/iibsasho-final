@@ -6,6 +6,7 @@ import 'package:iibsasho/core/model/user.dart';
 import 'package:iibsasho/core/model/comment.dart';
 import 'package:iibsasho/core/services/favorite_service.dart';
 import 'package:iibsasho/core/services/comment_service.dart';
+import 'package:iibsasho/views/widgets/user_profile_dialog.dart';
 import 'package:iibsasho/core/services/chat_service.dart' as TupleChat;
 import 'package:iibsasho/core/services/listing_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -39,6 +40,7 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
   final TextEditingController _commentController = TextEditingController();
   int selectedImageIndex = 0;
   late PageController _pageController;
+  bool _viewRecorded = false;
 
   @override
   void initState() {
@@ -48,6 +50,7 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
     _loadFavoriteStatus();
     _loadComments();
   _loadRecommendations();
+  _recordView();
   }
 
   @override
@@ -56,6 +59,21 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
     _commentController.dispose();
   _replyController.dispose();
     super.dispose();
+  }
+
+  Future<void> _recordView() async {
+    if (_viewRecorded) return;
+    _viewRecorded = true;
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.rpc('increment_listing_view', params: {'p_listing_id': widget.listing.id});
+      // Optimistically update local listing and any visible aggregate
+      setState(() {
+        widget.listing.viewCount = (widget.listing.viewCount) + 1;
+      });
+    } catch (e) {
+      AppLogger.w('increment view failed: $e');
+    }
   }
 
   void _loadFavoriteStatus() async {
@@ -1217,7 +1235,19 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(user.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                                InkWell(
+                                  onTap: () async {
+                                    // Open profile dialog for this seller
+                                    await showDialog(
+                                      context: context,
+                                      builder: (_) => UserProfileDialog(userId: widget.listing.userId, onListingTap: (l) {
+                                        Navigator.of(context).pop();
+                                        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ListingDetailPage(listing: l)));
+                                      }),
+                                    );
+                                  },
+                                  child: Text(user.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: AppColor.primary)),
+                                ),
                                 Text(user.email, style: TextStyle(color: Colors.black54, fontSize: 14)),
                               ],
                             ),
@@ -1333,11 +1363,28 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                                         Row(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            CircleAvatar(
+                                              GestureDetector(
+                                                onTap: () {
+                                                  if (comment.userId.isEmpty) return;
+                                                  showDialog(
+                                                    context: context,
+                                                    builder: (_) => UserProfileDialog(
+                                                      userId: comment.userId,
+                                                      onListingTap: (l) {
+                                                        Navigator.of(context).pop();
+                                                        Navigator.of(context).push(
+                                                          MaterialPageRoute(builder: (_) => ListingDetailPage(listing: l)),
+                                                        );
+                                                      },
+                                                    ),
+                                                  );
+                                                },
+                                                child: CircleAvatar(
                                               radius: 16,
                                               backgroundColor: AppColor.primary.withOpacity(0.1),
                                               child: Text(displayName[0].toUpperCase(), style: TextStyle(color: AppColor.primary, fontWeight: FontWeight.bold, fontSize: 14)),
-                                            ),
+                                                ),
+                                              ),
                                             SizedBox(width: 12),
                                             Expanded(
                                               child: Column(
@@ -1346,7 +1393,24 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                                                   Row(
                                                     children: [
                                                       Expanded(
-                                                        child: Text(displayName, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                                        child: GestureDetector(
+                                                          onTap: () {
+                                                            if (comment.userId.isEmpty) return;
+                                                            showDialog(
+                                                              context: context,
+                                                              builder: (_) => UserProfileDialog(
+                                                                userId: comment.userId,
+                                                                onListingTap: (l) {
+                                                                  Navigator.of(context).pop();
+                                                                  Navigator.of(context).push(
+                                                                    MaterialPageRoute(builder: (_) => ListingDetailPage(listing: l)),
+                                                                  );
+                                                                },
+                                                              ),
+                                                            );
+                                                          },
+                                                          child: Text(displayName, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                                        ),
                                                       ),
                                                       if (SupabaseHelper.currentUser?.id == comment.userId)
                                                         PopupMenuButton<String>(
@@ -1437,7 +1501,26 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
                                                   children: [
                                                     Row(
                                                       children: [
-                                                        Expanded(child: Text(replyName, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                                                        Expanded(
+                                                          child: GestureDetector(
+                                                            onTap: () {
+                                                              if (r.userId.isEmpty) return;
+                                                              showDialog(
+                                                                context: context,
+                                                                builder: (_) => UserProfileDialog(
+                                                                  userId: r.userId,
+                                                                  onListingTap: (l) {
+                                                                    Navigator.of(context).pop();
+                                                                    Navigator.of(context).push(
+                                                                      MaterialPageRoute(builder: (_) => ListingDetailPage(listing: l)),
+                                                                    );
+                                                                  },
+                                                                ),
+                                                              );
+                                                            },
+                                                            child: Text(replyName, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                                          ),
+                                                        ),
                                                         Text(_formatTimestamp(r.createdAt), style: TextStyle(color: Colors.grey[500], fontSize: 11)),
                                                         if (SupabaseHelper.currentUser?.id == r.userId) ...[
                                                           SizedBox(width: 4),
@@ -1540,6 +1623,10 @@ class _ListingDetailPageState extends State<ListingDetailPage> {
   String _formatTimestamp(DateTime timestamp) {
     final now = DateTime.now();
     final difference = now.difference(timestamp);
+
+    if (difference.isNegative) {
+      return 'Just now';
+    }
 
     if (difference.inMinutes < 60) {
       return '${difference.inMinutes}m ago';

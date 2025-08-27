@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'notification_service.dart';
 import '../model/comment.dart';
 import '../utils/app_logger.dart';
 
@@ -15,24 +16,57 @@ class CommentService {
       final currentUser = _supabase.auth.currentUser;
       if (currentUser == null) return null;
 
-      // Fetch optional user profile fields
+  // Fetch optional user profile fields
       String userName = 'Anonymous';
       String userPhotoUrl = '';
       try {
-        final userResponse = await _supabase
-            .from('users')
-            .select('name, display_name, photo_url')
+    final userResponse = await _supabase
+        .from('users')
+        .select('username, display_name, full_name, email, photo_url')
             .eq('id', currentUser.id)
             .maybeSingle();
         if (userResponse != null) {
-          // Prefer display_name if present
-            userName = userResponse['display_name'] ?? userResponse['name'] ?? 'Anonymous';
+            // Prefer username, then display_name, then full_name
+        userName = userResponse['username'] ?? userResponse['display_name'] ?? userResponse['full_name'] ?? '';
+            // If still empty, fallback to email local-part
+            if ((userName.isEmpty)) {
+              final email = (userResponse['email'] ?? currentUser.email ?? '').toString();
+              if (email.isNotEmpty) {
+                userName = email.split('@').first;
+              }
+            }
             userPhotoUrl = userResponse['photo_url'] ?? '';
         }
       } catch (_) {}
+      // Fallback: profiles table (if exists)
+      if (userName.isEmpty) {
+        try {
+          final prof = await _supabase
+              .from('profiles')
+                .select('username, display_name, full_name, name')
+              .eq('id', currentUser.id)
+              .maybeSingle();
+          if (prof != null) {
+              userName = (prof['username'] ?? prof['display_name'] ?? prof['full_name'] ?? prof['name'] ?? '').toString();
+          }
+        } catch (_) {}
+      }
+      // Final guard: try auth userMetadata first, then email local-part, then 'Anonymous'
+      if (userName.isEmpty) {
+        try {
+          final md = currentUser.userMetadata ?? {};
+          final mdName = (md['display_name'] ?? md['full_name'] ?? md['name'] ?? md['username'] ?? '').toString().trim();
+          if (mdName.isNotEmpty) userName = mdName;
+        } catch (_) {}
+      }
+      if (userName.isEmpty) {
+        final email = (currentUser.email ?? '').toString();
+        if (email.isNotEmpty) userName = email.split('@').first;
+      }
+      if (userName.isEmpty) userName = 'Anonymous';
 
       // Build base payload WITHOUT id so DB (uuid default) assigns one
-      final nowIso = DateTime.now().toIso8601String();
+  final nowIso = DateTime.now().toUtc().toIso8601String();
       Map<String, dynamic> payload = {
         'listing_id': listingId,
         'user_id': currentUser.id,
@@ -77,7 +111,55 @@ class CommentService {
         }
       }
 
-      return Comment.fromJson(inserted);
+      final created = Comment.fromJson(inserted);
+
+      // Notifications: comment on listing, and reply to comment
+      try {
+        // Fetch listing owner and title for context
+    final listing = await _supabase
+      .from('listings')
+      .select('user_id, title')
+            .eq('id', listingId)
+            .maybeSingle();
+    final listingOwnerId = listing?['user_id']?.toString();
+        final listingTitle = (listing?['title'] ?? 'your listing').toString();
+
+        // If this is a top-level comment and not by owner, notify owner
+        if ((parentId == null || parentId.isEmpty) &&
+            listingOwnerId != null && listingOwnerId.isNotEmpty &&
+            listingOwnerId != currentUser.id) {
+          await NotificationService.sendCommentNotification(
+            listingOwnerId: listingOwnerId,
+            commenterName: userName,
+            listingTitle: listingTitle,
+            listingId: listingId,
+            commentId: created.id,
+          );
+        }
+
+        // If this is a reply, notify parent comment author (not self)
+        if (parentId != null && parentId.isNotEmpty) {
+          final parent = await _supabase
+              .from('comments')
+              .select('user_id')
+              .eq('id', parentId)
+              .maybeSingle();
+          final parentAuthorId = parent?['user_id']?.toString();
+          if (parentAuthorId != null && parentAuthorId.isNotEmpty && parentAuthorId != currentUser.id) {
+            await NotificationService.sendCommentReplyNotification(
+              parentAuthorId: parentAuthorId,
+              replierName: userName,
+              listingTitle: listingTitle,
+              commentId: created.id,
+              listingId: listingId,
+            );
+          }
+        }
+      } catch (e) {
+        AppLogger.w('addComment notification failed: $e');
+      }
+
+      return created;
     } catch (e) {
       AppLogger.e('addComment failed', e);
       return null;
@@ -92,8 +174,61 @@ class CommentService {
       await _supabase.from('comment_likes').insert({
         'comment_id': commentId,
         'user_id': user.id,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': DateTime.now().toUtc().toIso8601String(),
       });
+
+      // Notify comment author (not self)
+      try {
+        final comment = await _supabase
+            .from('comments')
+            .select('user_id, listing_id')
+            .eq('id', commentId)
+            .maybeSingle();
+        final authorId = comment?['user_id']?.toString();
+        final listingId = comment?['listing_id']?.toString();
+        if (authorId != null && listingId != null && authorId != user.id) {
+          // Fetch liker name and listing title
+          Map<String, dynamic>? likerRow;
+          try {
+            likerRow = await _supabase
+                .from('users')
+                .select('display_name, full_name, username, email')
+                .eq('id', user.id)
+                .maybeSingle();
+          } catch (e) {
+            try {
+              likerRow = await _supabase
+                  .from('users')
+                  .select('display_name, username, email')
+                  .eq('id', user.id)
+                  .maybeSingle();
+            } catch (_) {}
+          }
+          String likerName = (likerRow?['display_name'] ?? likerRow?['full_name'] ?? likerRow?['username'] ?? '').toString();
+          if (likerName.isEmpty) {
+            final email = (likerRow?['email'] ?? user.email ?? '').toString();
+            if (email.isNotEmpty) likerName = email.split('@').first;
+          }
+          if (likerName.isEmpty) likerName = 'Someone';
+
+          final listing = await _supabase
+              .from('listings')
+              .select('title')
+              .eq('id', listingId)
+              .maybeSingle();
+          final listingTitle = (listing?['title'] ?? 'your listing').toString();
+
+          await NotificationService.sendCommentLikeNotification(
+            commentAuthorId: authorId,
+            likerName: likerName,
+            listingTitle: listingTitle,
+            commentId: commentId,
+            listingId: listingId,
+          );
+        }
+      } catch (e) {
+        AppLogger.w('likeComment notification failed: $e');
+      }
       return true;
     } catch (e) {
       // Ignore unique violation
@@ -141,7 +276,50 @@ class CommentService {
           .select()
           .eq('parent_id', parentCommentId)
           .order('created_at', ascending: true);
-      return response.map((json) => Comment.fromJson(json)).toList();
+      // Enrich with user profiles and override anonymous names
+      final userIds = response
+          .map((r) => r['user_id'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+      Map<String, Map<String, dynamic>> userMap = {};
+      if (userIds.isNotEmpty) {
+        try {
+          final fetched = await _supabase
+              .from('users')
+              .select('id, name, display_name, full_name, username, email, photo_url')
+              .inFilter('id', userIds);
+          for (final u in fetched) {
+            userMap[u['id']] = u;
+          }
+        } catch (_) {
+          try {
+            final fetched = await _supabase
+                .from('users')
+                .select('id, name, display_name, full_name, username, photo_url')
+                .inFilter('id', userIds);
+            for (final u in fetched) {
+              userMap[u['id']] = u;
+            }
+          } catch (_) {}
+        }
+      }
+      return response.map((r) {
+        final u = userMap[r['user_id']];
+        if (u != null) {
+          final copy = Map<String, dynamic>.from(r);
+          copy['users'] = u;
+          final current = (copy['user_name'] ?? '').toString().trim();
+          if (current.isEmpty || current.toLowerCase() == 'anonymous') {
+            final best = (u['display_name'] ?? u['name'] ?? u['full_name'] ?? u['username'] ?? '').toString().trim();
+            if (best.isNotEmpty) {
+              copy['user_name'] = best;
+            }
+          }
+          return Comment.fromJson(copy);
+        }
+        return Comment.fromJson(r);
+      }).toList();
     } catch (e) {
       AppLogger.e('getReplies failed', e);
       return [];
@@ -151,7 +329,7 @@ class CommentService {
   // Get comments for a listing
   static Future<List<Comment>> getComments(String listingId) async {
     try {
-      final response = await _supabase
+  final response = await _supabase
           .from('comments')
           .select()
           .eq('listing_id', listingId)
@@ -167,18 +345,35 @@ class CommentService {
         try {
           final fetched = await _supabase
               .from('users')
-              .select('id, name, display_name, photo_url')
+              .select('id, name, display_name, full_name, username, email, photo_url')
               .inFilter('id', userIds);
           for (final u in fetched) {
             userMap[u['id']] = u;
           }
-        } catch (_) {}
+        } catch (_) {
+          // Fallback if some columns like email don't exist
+          try {
+            final fetched = await _supabase
+                .from('users')
+                .select('id, name, display_name, full_name, username, photo_url')
+                .inFilter('id', userIds);
+            for (final u in fetched) {
+              userMap[u['id']] = u;
+            }
+          } catch (_) {}
+        }
       }
       return response.map((r) {
         final u = userMap[r['user_id']];
         if (u != null) {
           final copy = Map<String, dynamic>.from(r);
           copy['users'] = u; // leveraged by model
+          // Override placeholder names if needed
+          final current = (copy['user_name'] ?? '').toString().trim();
+          if (current.isEmpty || current.toLowerCase() == 'anonymous') {
+            final best = (u['display_name'] ?? u['name'] ?? u['full_name'] ?? u['username'] ?? '').toString().trim();
+            if (best.isNotEmpty) copy['user_name'] = best;
+          }
           return Comment.fromJson(copy);
         }
         return Comment.fromJson(r);
@@ -231,9 +426,12 @@ class CommentService {
         .eq('listing_id', listingId)
         .order('created_at', ascending: false)
         .asyncMap((rows) async {
-          // Identify any user_ids with missing user_name to fill
+          // Identify any user_ids with missing or placeholder user_name to fill
           final missing = rows
-              .where((r) => (r['user_name'] == null || (r['user_name'] as String?)?.isEmpty == true))
+              .where((r) {
+                final un = (r['user_name'] ?? '').toString().trim();
+                return un.isEmpty || un.toLowerCase() == 'anonymous';
+              })
               .map((r) => r['user_id'] as String?)
               .whereType<String>()
               .toSet();
@@ -242,19 +440,34 @@ class CommentService {
             try {
               final fetched = await _supabase
                   .from('users')
-                  .select('id, name, display_name, photo_url')
+                  .select('id, name, display_name, full_name, username, email, photo_url')
                   .inFilter('id', missing.toList());
               for (final u in fetched) {
                 userMap[u['id']] = u;
               }
-            } catch (_) {}
+            } catch (_) {
+              try {
+                final fetched = await _supabase
+                    .from('users')
+                    .select('id, name, display_name, full_name, username, photo_url')
+                    .inFilter('id', missing.toList());
+                for (final u in fetched) {
+                  userMap[u['id']] = u;
+                }
+              } catch (_) {}
+            }
           }
           final enriched = rows.map((r) {
-            if ((r['user_name'] == null || (r['user_name'] as String?)?.isEmpty == true)) {
-              final u = userMap[r['user_id']];
-              if (u != null) {
-                r = Map<String, dynamic>.from(r);
-                r['users'] = u; // so Comment.fromJson can extract
+            final un = (r['user_name'] ?? '').toString().trim();
+            final u = userMap[r['user_id']];
+            if (u != null) {
+              r = Map<String, dynamic>.from(r);
+              r['users'] = u; // so Comment.fromJson can extract/override
+              if (un.isEmpty || un.toLowerCase() == 'anonymous') {
+                final best = (u['display_name'] ?? u['name'] ?? u['full_name'] ?? u['username'] ?? '').toString().trim();
+                if (best.isNotEmpty) {
+                  r['user_name'] = best;
+                }
               }
             }
             return Comment.fromJson(r);

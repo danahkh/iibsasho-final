@@ -3,6 +3,7 @@ import '../../constant/app_color.dart';
 import '../../widgets/app_logo_widget.dart';
 import '../../core/services/admin_access_service.dart';
 import '../../core/utils/supabase_helper.dart';
+import '../../core/services/database_service.dart';
 
 class SupportPage extends StatefulWidget {
   const SupportPage({super.key});
@@ -694,13 +695,18 @@ class _SupportPageState extends State<SupportPage> {
     try {
       final user = SupabaseHelper.currentUser;
       
-      await SupabaseHelper.insert('support_requests', {
+      await DatabaseService.createSupportRequest({
         'name': _nameController.text.trim(),
         'email': user?.email,
         'user_id': user?.id,
         'category': _selectedCategory,
         'reason': _reasonController.text.trim(),
-        'description': _descriptionController.text.trim(),
+    'description': _descriptionController.text.trim(),
+    'message': _descriptionController.text.trim().isNotEmpty
+      ? _descriptionController.text.trim()
+      : (_reasonController.text.trim().isNotEmpty
+        ? _reasonController.text.trim()
+        : 'Support request'),
         'status': 'open',
       });
 

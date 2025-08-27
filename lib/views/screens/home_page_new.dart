@@ -546,8 +546,19 @@ class _HomePageState extends State<HomePage> {
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: Image.network(
-                          listing.images.first,
+                          _resolveImageUrl(listing.images.first),
                           fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            );
+                          },
                           errorBuilder: (context, error, stackTrace) {
                             return Icon(
                               Icons.image,
@@ -609,6 +620,31 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  // Resolve image URL: if it's a Supabase storage path or relative path, convert to public URL
+  String _resolveImageUrl(String raw) {
+    final url = raw.trim();
+    // Already a full URL
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    // Common mistake: only path or storage key stored. Try to build a public URL from 'listings' bucket
+    try {
+      final path = url.startsWith('/') ? url.substring(1) : url;
+      // If looks like storage/v1/object/public/<bucket>/<objectPath> -> translate via getPublicUrl
+      if (path.startsWith('storage/v1/object/public/')) {
+        final rest = path.replaceFirst('storage/v1/object/public/', '');
+        final firstSlash = rest.indexOf('/');
+        if (firstSlash > 0) {
+          final bucket = rest.substring(0, firstSlash);
+          final objectPath = rest.substring(firstSlash + 1);
+          return SupabaseHelper.client.storage.from(bucket).getPublicUrl(objectPath);
+        }
+      }
+      // Else assume it's a file key within 'listings' bucket
+      return SupabaseHelper.client.storage.from('listings').getPublicUrl(path);
+    } catch (_) {
+      return raw; // fallback
+    }
   }
 
   Widget _buildTag(String text, Color textColor, Color bg) {

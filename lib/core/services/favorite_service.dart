@@ -43,29 +43,47 @@ class FavoriteService {
         
         // Send notification to listing owner
         try {
-          final listingResponse = await _supabase
-              .from('listings')
-              .select('title, seller_id')
+      final listingResponse = await _supabase
+        .from('listings')
+        .select('title, user_id')
               .eq('id', listingId)
               .maybeSingle();
               
-          final userResponse = await _supabase
-              .from('users')
-              .select('name, display_name')
-              .eq('id', user.id)
-              .maybeSingle();
+          Map<String, dynamic>? userResponse;
+          try {
+            userResponse = await _supabase
+                .from('users')
+                .select('display_name, full_name, username, email')
+                .eq('id', user.id)
+                .maybeSingle();
+          } catch (e) {
+            // Retry with a minimal set if some columns don't exist
+            try {
+              userResponse = await _supabase
+                  .from('users')
+                  .select('display_name, username, email')
+                  .eq('id', user.id)
+                  .maybeSingle();
+            } catch (_) {}
+          }
           
-          final likerName = userResponse?['name'] ?? userResponse?['display_name'] ?? 'Someone';
-          final listingTitle = listingResponse?['title'] ?? 'your listing';
-          final sellerId = listingResponse?['seller_id'];
+          String likerName = (userResponse?['username'] ?? userResponse?['display_name'] ?? userResponse?['full_name'] ?? '').toString();
+          if (likerName.isEmpty) {
+            final email = (userResponse?['email'] ?? user.email ?? '').toString();
+            if (email.isNotEmpty) likerName = email.split('@').first;
+          }
+          if (likerName.isEmpty) likerName = 'Someone';
+      final listingTitle = listingResponse?['title'] ?? 'your listing';
+      final ownerId = listingResponse?['user_id'];
           
-          if (sellerId != user.id) { // Don't notify yourself
-            await NotificationService.sendFavoriteNotification(
-              listingOwnerId: sellerId,
+  if (ownerId != user.id && ownerId != null) { // Don't notify yourself
+    final ok = await NotificationService.sendFavoriteNotification(
+        listingOwnerId: ownerId,
               favoriterName: likerName,
               listingTitle: listingTitle,
               listingId: listingId,
             );
+    AppLogger.d('Favorite notification result=$ok owner=$ownerId listing=$listingId');
           }
         } catch (e) {
           AppLogger.w('Favorite notification failed: $e');

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../constant/app_color.dart';
 import '../../core/utils/supabase_helper.dart';
-import '../../core/services/database_service.dart';
-import '../../core/services/promotion_service.dart';
+import '../../core/services/notification_service.dart';
+import 'admin_analytics_page.dart';
+import 'admin_support_requests_page.dart';
+// Removed unused import of promotion_service.dart
 
 class AdminDashboardPage extends StatefulWidget {
   const AdminDashboardPage({super.key});
@@ -100,7 +102,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> with SingleTick
           children: [
             _ListingsAdminTab(),
             _SupportAdminTab(),
-            _AnalyticsAdminTab(),
+            const AdminAnalyticsPage(),
             _NotificationSenderTab(),
           ],
         ),
@@ -205,107 +207,12 @@ class _ListingsAdminTabState extends State<_ListingsAdminTab> {
 class _SupportAdminTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Map<String,dynamic>>>(
-      future: DatabaseService.getSupportRequests(),
-      builder: (c,s){
-        if (s.connectionState==ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        if (!s.hasData || s.data!.isEmpty) return const Center(child: Text('No support requests'));
-        final items = s.data!;
-        return ListView.builder(
-          itemCount: items.length,
-          itemBuilder: (c,i){
-            final r = items[i];
-            return ExpansionTile(
-              title: Text(r['subject']?? r['category']?? 'Request'),
-              subtitle: Text(r['status']??'pending'),
-              children: [
-                Padding(padding: const EdgeInsets.all(12), child: Text(r['description']??'')),
-                Row(children:[
-                  TextButton(onPressed: (){ DatabaseService.updateSupportRequestStatus(r['id'].toString(), 'closed'); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Closed')));}, child: const Text('Close')),
-                ])
-              ],
-            );
-          },
-        );
-      },
-    );
+  // Show the enhanced realtime AdminSupportRequestsPage inline.
+  return const AdminSupportRequestsPage();
   }
 }
 
-class _AnalyticsAdminTab extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Map<String,dynamic>>(
-      future: PromotionService.getPromotionAnalytics(),
-      builder: (c,s){
-        if (s.connectionState==ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final data = s.data ?? {};
-        final status = (data['statusCounts'] as Map<String,int>? ) ?? {};
-        final total = data['totalRequests'] ?? 0;
-        final active = data['activePromotions'] ?? 0;
-        final approved = status['approved'] ?? 0;
-        final pending = status['pending'] ?? 0;
-        final rejected = status['rejected'] ?? 0;
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 1.8,
-              children: [
-                _statCard('Promotion Requests', total.toString(), Icons.campaign, Colors.blue),
-                _statCard('Active Promotions', active.toString(), Icons.star, Colors.amber.shade700),
-                _statCard('Approved', approved.toString(), Icons.check_circle, Colors.green),
-                _statCard('Pending', pending.toString(), Icons.hourglass_bottom, Colors.orange),
-                _statCard('Rejected', rejected.toString(), Icons.cancel, Colors.red),
-              ],
-            ),
-            const SizedBox(height:24),
-            const Text('Status Breakdown', style: TextStyle(fontWeight: FontWeight.bold)),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: status.entries.map((e)=> Chip(label: Text('${e.key}: ${e.value}'))).toList(),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _statCard(String title, String value, IconData icon, Color color){
-    return Card(
-      elevation: 1,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: color.withOpacity(.12), borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
-                  const SizedBox(height:4),
-                  Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-                ],
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-}
+// _AnalyticsAdminTab replaced by AdminAnalyticsPage
 
 class _NotificationSenderTab extends StatefulWidget {
   @override
@@ -322,13 +229,14 @@ class _NotificationSenderTabState extends State<_NotificationSenderTab> {
     if(!_formKey.currentState!.validate()) return;
     setState(()=> _sending = true);
     try {
-      await DatabaseService.createNotification({
-        'title': _titleCtrl.text,
-        'body': _bodyCtrl.text,
-        'type': 'admin_broadcast'
-      });
+      // Fan-out to all users via NotificationService helper
+      final sent = await NotificationService.sendAdminBroadcast(
+        title: _titleCtrl.text,
+        message: _bodyCtrl.text,
+      );
       if(mounted){
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notification queued')));
+        final text = sent > 0 ? 'Sent to $sent users' : 'No recipients found';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
         _titleCtrl.clear();
         _bodyCtrl.clear();
       }

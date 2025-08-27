@@ -26,13 +26,26 @@ class Comment {
     // Attempt to pull display info from flattened columns first, then joined users relation
     final usersRel = json['users'];
     String derivedName = json['user_name'] ?? '';
-    if ((derivedName.isEmpty) && usersRel is Map) {
-      derivedName = usersRel['display_name'] ?? usersRel['name'] ?? '';
+    // If stored name is missing or a generic placeholder, try to derive from joined users profile
+    if ((derivedName.isEmpty || derivedName.trim().toLowerCase() == 'anonymous') && usersRel is Map) {
+  final dn = usersRel['display_name'] ?? usersRel['name'] ?? usersRel['full_name'] ?? usersRel['username'] ?? '';
+  derivedName = dn.toString();
+      if (derivedName.isEmpty) {
+        final email = (usersRel['email'] ?? '').toString();
+        if (email.isNotEmpty && email.contains('@')) {
+          // Use the part before @ as a friendly fallback
+          derivedName = email.split('@').first;
+        }
+      }
     }
     String derivedPhoto = json['user_photo_url'] ?? '';
     if ((derivedPhoto.isEmpty) && usersRel is Map) {
       derivedPhoto = usersRel['photo_url'] ?? '';
     }
+
+    // Normalize timestamp to local time to avoid negative durations
+    final parsedCreated = DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now();
+    final localCreated = parsedCreated.toLocal();
 
     return Comment(
       id: json['id'] ?? '',
@@ -41,7 +54,7 @@ class Comment {
       userName: derivedName,
       userPhotoUrl: derivedPhoto,
       text: json['text'] ?? json['content'] ?? '',
-      createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
+      createdAt: localCreated,
       parentId: json['parent_id'],
       likeCount: (json['like_count'] is int)
           ? json['like_count']

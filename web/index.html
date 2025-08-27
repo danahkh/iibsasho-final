@@ -26,11 +26,20 @@
   <meta name="apple-mobile-web-app-title" content="iibsasho">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <!-- Favicon (serve directly from /web to avoid Flutter asset path issues) -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=5" />
+  <link rel="alternate icon" type="image/png" href="/icons/Icon-192.png" />
 
   <title>iibsasho</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Prevent browser-native pull-to-refresh from hijacking the gesture */
+    html, body {
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+      height: 100%;
+    }
+  </style>
   <!-- Google Maps JavaScript API for web support (not used; we use flutter_map/OSM). -->
     <!-- OpenStreetMap via flutter_map requires no extra web script. -->
 </head>

@@ -11,15 +11,32 @@ class AdminAccessService {
       final currentUser = _supabase.auth.currentUser;
       if (currentUser == null) return false;
 
-      final response = await _supabase
+      // First check users.role and users.is_admin if present
+      final userRow = await _supabase
           .from('users')
-          .select('role')
+          .select('role, is_admin')
           .eq('id', currentUser.id)
           .maybeSingle();
 
-      if (response == null) return false;
+      if (userRow != null) {
+        if (userRow['role'] == 'admin' || userRow['is_admin'] == true) {
+          return true;
+        }
+      }
 
-      return response['role'] == 'admin';
+      // Fallback to profiles.is_admin if that table exists in the backend
+      try {
+        final profile = await _supabase
+            .from('profiles')
+            .select('is_admin')
+            .eq('id', currentUser.id)
+            .maybeSingle();
+        if (profile != null && profile['is_admin'] == true) return true;
+      } catch (_) {
+        // profiles table might not exist; ignore
+      }
+
+      return false;
     } catch (e) {
       AppLogger.e('Error checking admin status', e);
       return false;
@@ -34,13 +51,30 @@ class AdminAccessService {
 
       final response = await _supabase
           .from('users')
-          .select('role')
+          .select('role, is_admin')
           .eq('id', currentUser.id)
           .maybeSingle();
 
       if (response == null) return 'user';
 
-      return response['role'] ?? 'user';
+      if (response['role'] != null) {
+        return response['role'];
+      }
+      if (response['is_admin'] == true) {
+        return 'admin';
+      }
+
+      // profiles fallback
+      try {
+        final profile = await _supabase
+            .from('profiles')
+            .select('is_admin')
+            .eq('id', currentUser.id)
+            .maybeSingle();
+        if (profile != null && profile['is_admin'] == true) return 'admin';
+      } catch (_) {}
+
+      return 'user';
     } catch (e) {
       AppLogger.e('Error getting user role', e);
       return 'user';

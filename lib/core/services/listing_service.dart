@@ -282,21 +282,30 @@ class ListingService {
   /// Get listings for a specific user
   static Future<List<Listing>> getUserListings(String userId) async {
     try {
-      final response = await _supabase
-          .from('listings')
-          .select('''
-            *,
-            users!listings_user_id_fkey(
-              id,
-              name,
-              email,
-              photo_url
-            )
-          ''')
-          .eq('user_id', userId)
-          .order('created_at', ascending: false);
-
-      return response.map((json) => Listing.fromMap(json)).toList();
+      try {
+        final response = await _supabase
+            .from('listings')
+            .select('''
+              *,
+              users!listings_user_id_fkey(
+                id,
+                name,
+                email,
+                photo_url
+              )
+            ''')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false);
+        return response.map((json) => Listing.fromMap(json)).toList();
+      } catch (e) {
+        // Fallback without join
+        final response = await _supabase
+            .from('listings')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false);
+        return response.map((json) => Listing.fromMap(json)).toList();
+      }
 
     } catch (e) {
   AppLogger.e('Error fetching user listings', e);
@@ -307,21 +316,31 @@ class ListingService {
   /// Get a single listing by ID
   static Future<Listing?> getListingById(String id) async {
     try {
-      final response = await _supabase
-          .from('listings')
-          .select('''
-            *,
-            users!listings_user_id_fkey(
-              id,
-              name,
-              email,
-              photo_url
-            )
-          ''')
-          .eq('id', id)
-          .single();
-
-      return Listing.fromMap(response);
+      // Try with join first (may fail if FK alias differs in this DB)
+      try {
+        final response = await _supabase
+            .from('listings')
+            .select('''
+              *,
+              users!listings_user_id_fkey(
+                id,
+                name,
+                email,
+                photo_url
+              )
+            ''')
+            .eq('id', id)
+            .single();
+        return Listing.fromMap(response);
+      } catch (_) {
+        // Fallback: fetch without join
+        final response = await _supabase
+            .from('listings')
+            .select('*')
+            .eq('id', id)
+            .single();
+        return Listing.fromMap(response);
+      }
 
     } catch (e) {
   AppLogger.e('Error fetching listing', e);

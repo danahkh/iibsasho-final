@@ -36,13 +36,64 @@ class ChatService {
               allChats[chat['id']] = _normalizeChatMap(chat, userId);
             }
 
-            // Convert to Chat objects and sort by last_message_time
-            final chatList = allChats.values
-                .map((chat) => Chat.fromMap(chat))
-                .toList();
-            
-            chatList.sort((a, b) => 
-                b.lastMessageTime.compareTo(a.lastMessageTime));
+            // Convert to Chat objects (initial unread may be 0 if schema lacks per-user map)
+            var chatList = allChats.values.map((chat) => Chat.fromMap(chat)).toList();
+
+            // Fallback: if many chats have unreadCount == 0, compute per-chat unread
+            // by counting messages where is_read=false and sender_id != currentUser.
+            try {
+              final zeroCount = chatList.where((c) => c.unreadCount == 0).length;
+              if (chatList.isNotEmpty && zeroCount == chatList.length) {
+                final chatIds = chatList.map((c) => c.id).toList();
+                // Try new table first
+                List<dynamic> rows = [];
+                try {
+          rows = await _supabase
+            .from('chat_messages')
+            .select('chat_id, is_read, sender_id')
+            .inFilter('chat_id', chatIds)
+            .eq('is_read', false);
+                } catch (_) {
+                  try {
+          rows = await _supabase
+            .from('messages')
+            .select('chat_id, is_read, sender_id')
+            .inFilter('chat_id', chatIds)
+            .eq('is_read', false);
+                  } catch (_) {}
+                }
+                if (rows.isNotEmpty) {
+                  final Map<String, int> counts = {};
+                  for (final r in rows) {
+                    final map = Map<String, dynamic>.from(r as Map);
+                    final cid = (map['chat_id'] ?? '').toString();
+                    final sid = (map['sender_id'] ?? '').toString();
+                    if (sid == userId) continue; // don't count my sent messages
+                    counts[cid] = (counts[cid] ?? 0) + 1;
+                  }
+                  chatList = chatList
+                      .map((c) => Chat(
+                            id: c.id,
+                            listingId: c.listingId,
+                            sellerId: c.sellerId,
+                            buyerId: c.buyerId,
+                            listingTitle: c.listingTitle,
+                            lastMessage: c.lastMessage,
+                            lastMessageTime: c.lastMessageTime,
+                            unreadCount: counts[c.id] ?? c.unreadCount,
+                            otherUserName: c.otherUserName,
+                            otherUserAvatar: c.otherUserAvatar,
+                            createdAt: c.createdAt,
+                          ))
+                      .toList();
+                }
+              }
+            } catch (_) {
+              // ignore fallback errors
+            }
+
+            // Sort by last message time desc
+            chatList.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
 
             return chatList;
           });
@@ -64,7 +115,9 @@ class ChatService {
       myUnread = int.tryParse(unread) ?? 0;
     } else if (unread is Map) {
       final val = unread[currentUserId];
-      if (val is int) myUnread = val; else if (val is String) myUnread = int.tryParse(val) ?? 0;
+      if (val is int) {
+        myUnread = val;
+      } else if (val is String) myUnread = int.tryParse(val) ?? 0;
     }
     m['unread_count'] = myUnread;
     // Ensure last_message_time exists for sorting
@@ -195,11 +248,11 @@ class ChatService {
         }
       }
 
-      // Update chat last message/time and best-effort unread_count
+  // Update chat last message/time and best-effort unread_count
       try {
-        final chatData = await _supabase
-            .from('chats')
-            .select('seller_id, buyer_id, unread_count')
+  final chatData = await _supabase
+      .from('chats')
+    .select('seller_id, buyer_id, unread_count, listing_title')
             .eq('id', chatId)
             .maybeSingle();
 
@@ -209,10 +262,17 @@ class ChatService {
           'updated_at': nowIso,
         };
 
+        String? otherId;
         if (chatData != null) {
           final sellerId = chatData['seller_id']?.toString();
           final buyerId = chatData['buyer_id']?.toString();
-          final otherId = senderId == sellerId ? buyerId : sellerId;
+          if (sellerId != null || buyerId != null) {
+            otherId = senderId == sellerId ? buyerId : sellerId;
+          } else {
+            final participants = List<String>.from(chatData['participants'] ?? []);
+            final candidate = participants.firstWhere((id) => id != senderId, orElse: () => '');
+            otherId = candidate.isEmpty ? null : candidate;
+          }
           if (otherId != null) {
             final Map<String, dynamic> unread =
                 Map<String, dynamic>.from(chatData['unread_count'] ?? {});
@@ -242,40 +302,57 @@ class ChatService {
 
   // Send notification to recipient (best-effort; ignore schema diffs)
       try {
-        final chatResponse = await _supabase
-            .from('chats')
-            .select('seller_id, buyer_id')
+    final chatResponse = await _supabase
+      .from('chats')
+      .select('seller_id, buyer_id, listing_title')
             .eq('id', chatId)
             .single();
-            
-        final recipientId = chatResponse['seller_id'] == senderId 
-            ? chatResponse['buyer_id'] 
-            : chatResponse['seller_id'];
+        String? recipientId;
+    final sid = chatResponse['seller_id']?.toString();
+    final bid = chatResponse['buyer_id']?.toString();
+    recipientId = senderId == sid ? bid : sid;
+        if (recipientId == null) {
+          // No valid recipient, skip
+          return true;
+        }
         
-        final senderResponse = await _supabase
-            .from('users')
-            .select('name, display_name')
-            .eq('id', senderId)
-            .single();
-            
-        final senderName = senderResponse['name'] ?? senderResponse['display_name'] ?? 'Someone';
+        // Resolve sender name robustly (users or profiles)
+        String senderName = 'Someone';
+        try {
+          final senderResponse = await _supabase
+              .from('users')
+              .select('username, display_name, full_name, email')
+              .eq('id', senderId)
+              .maybeSingle();
+          if (senderResponse != null) {
+            senderName = (senderResponse['username'] ?? senderResponse['display_name'] ?? senderResponse['full_name'] ?? '').toString();
+            if (senderName.isEmpty) {
+              final email = (senderResponse['email'] ?? '').toString();
+              if (email.isNotEmpty) senderName = email.split('@').first;
+            }
+          }
+          if (senderName.isEmpty) {
+            final prof = await _supabase
+                .from('profiles')
+                .select('username, display_name, full_name, name')
+                .eq('id', senderId)
+                .maybeSingle();
+            if (prof != null) {
+              senderName = (prof['username'] ?? prof['display_name'] ?? prof['full_name'] ?? prof['name'] ?? '').toString();
+            }
+          }
+        } catch (_) {}
+        if (senderName.isEmpty) senderName = 'Someone';
         
         // Try to get listing title if present on chat for richer notification
-        String listingTitle = '';
-        try {
-          final listingData = await _supabase
-              .from('chats')
-              .select('listing_title')
-              .eq('id', chatId)
-              .maybeSingle();
-          if (listingData != null) listingTitle = listingData['listing_title'] ?? '';
-        } catch (_) {}
-        await NotificationService.sendMessageNotification(
+        String listingTitle = (chatResponse['listing_title'] ?? '').toString();
+  final ok = await NotificationService.sendMessageNotification(
           recipientId: recipientId,
           senderName: senderName,
           chatId: chatId,
           listingTitle: listingTitle,
         );
+  AppLogger.d('sendMessage: notification result=$ok to=$recipientId chat=$chatId');
       } catch (e) {
         AppLogger.w('sendMessage notification failed: $e');
         // Don't fail the message if notification fails
@@ -384,6 +461,23 @@ class ChatService {
     } catch (e) {
       AppLogger.e('deleteChat failed', e);
       return false;
+    }
+  }
+
+  // Fetch a single chat by id and normalize for current user
+  static Future<Chat?> getChatById(String chatId, String currentUserId) async {
+    try {
+      final row = await _supabase
+          .from('chats')
+          .select()
+          .eq('id', chatId)
+          .maybeSingle();
+      if (row == null) return null;
+      final norm = _normalizeChatMap(Map<String, dynamic>.from(row), currentUserId);
+      return Chat.fromMap(norm);
+    } catch (e) {
+      AppLogger.e('getChatById failed', e);
+      return null;
     }
   }
 }

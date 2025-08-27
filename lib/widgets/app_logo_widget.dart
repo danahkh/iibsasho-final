@@ -36,7 +36,7 @@ class AppLogoWidget extends StatelessWidget {
     // Calculate font size based on height if not provided
     double textSize = fontSize ?? (height != null ? height! * 0.5 : 16);
 
-    return Container(
+    return SizedBox(
       height: height,
       width: width,
       child: Center(
