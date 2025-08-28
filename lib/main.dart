@@ -62,6 +62,8 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
+  // Default to English unless user explicitly changes locale to avoid unintended RTL layouts
+  final Locale effectiveLocale = _locale ?? const Locale('en');
     return FutureBuilder<User?>(
       future: _checkUserAndDoc(),
       builder: (context, snapshot) {
@@ -130,14 +132,10 @@ class _MyAppState extends State<MyApp> {
               Locale('so'),
             ],
             localeResolutionCallback: (locale, supportedLocales) {
-              for (var supportedLocale in supportedLocales) {
-                if (supportedLocale.languageCode == locale?.languageCode) {
-                  return supportedLocale;
-                }
-              }
-              return supportedLocales.first;
+              // Respect explicitly selected locale; otherwise default to English
+              return effectiveLocale;
             },
-            locale: _locale,
+            locale: effectiveLocale,
             home: PageSwitcher(),
           ),
           );
@@ -201,14 +199,10 @@ class _MyAppState extends State<MyApp> {
               Locale('so'),
             ],
             localeResolutionCallback: (locale, supportedLocales) {
-              for (var supportedLocale in supportedLocales) {
-                if (supportedLocale.languageCode == locale?.languageCode) {
-                  return supportedLocale;
-                }
-              }
-              return supportedLocales.first;
+              // Respect explicitly selected locale; otherwise default to English
+              return effectiveLocale;
             },
-            locale: _locale,
+            locale: effectiveLocale,
             home: PageSwitcher(),
           ),
           );
